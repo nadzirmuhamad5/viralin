@@ -1,2 +1,27 @@
 skills/
 node_modules/
+
+# ── runtime besar & regenerable (cara regenerasi ada di README) ──
+.deps/
+.cache/
+deploy/
+pot-provider/
+ytref/
+viralin-next/.next/
+viralin-next/data/
+
+# asset uji yang di-generate
+download/*.mp4
+
+# RAHASIA: skrip ini memuat nilai cookies akun asli — JANGAN pernah di-commit
+scripts/make-cookies-file.py
+
+# noise
+__pycache__/
+*.pyc
+*.log
+*.part
+.DS_Store
+
+# kredensial lokal — jangan pernah di-push
+.env
