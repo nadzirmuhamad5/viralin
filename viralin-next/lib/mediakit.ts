@@ -33,6 +33,7 @@ async function cookieArgs(
     const name =
       "paste-" + createHash("sha1").update(cookies).digest("hex").slice(0, 12) + ".txt";
     p = path.join(UPLOAD_DIR, name);
+    await fs.mkdir(UPLOAD_DIR, { recursive: true }); // data/ bisa terhapus (recycle/reset) — jangan biarkan writeFile ENOENT
     await fs.writeFile(p, cookies.replace(/\r/g, ""), "utf-8");
     log("[cookies] pakai cookies paste user");
   } else {
