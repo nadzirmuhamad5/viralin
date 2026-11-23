@@ -49,22 +49,37 @@ async function cookieArgs(
 
 const BOT_RE =
   /sign in to confirm|not a bot|age.restrict|members-only|geo-?restrict|unavailable|private video|429|too many requests/i;
+const FORMAT_RE = /requested format is not available/i;
+
+/** Runtime JS untuk solver challenge yt-dlp (EJS) — sejak yt-dlp 2025+ wajib ada,
+ *  kalau tidak n-challenge gagal → seluruh stream video/audio "missing URL"
+ *  (sisa cuma storyboard) → "Requested format is not available".
+ *  yt-dlp hanya mengaktifkan deno secara default; node harus opt-in eksplisit. */
+async function jsRuntimeArgs(): Promise<string[]> {
+  const exists = (p: string) => fs.stat(p).then(() => true).catch(() => false);
+  const deno = ["/home/z/my-project/pot-provider/deno", "/usr/local/bin/deno", "/usr/bin/deno"];
+  for (const p of deno) if (await exists(p)) return ["--js-runtimes", `deno:${p}`];
+  const node = ["/usr/bin/node", "/usr/local/bin/node"];
+  for (const p of node) if (await exists(p)) return ["--js-runtimes", `node:${p}`];
+  return [];
+}
 
 /** yt-dlp dengan cookies opsional + fallback client YouTube (anti bot-check).
  *  args: flag khusus pemanggil (mis. ["-q","-o",src]); URL ditambahkan di akhir.
- *  Return label client yang berhasil. */
-export async function ytdlpFetch(
+ *  Return label client yang berhasil + stdout (untuk --print metadata). */
+export async function ytdlpRun(
   args: string[],
   url: string,
   cookies: string | undefined,
   log: (l: string) => void,
   onLine?: (l: string) => void
-): Promise<string> {
+): Promise<{ client: string; stdout: string }> {
   const ck = await cookieArgs(cookies, log);
   // proxy opsional (residential) — YouTube memblokir stream dari IP data center
   const px = process.env.VL_PROXY ? ["--proxy", process.env.VL_PROXY] : [];
   // PYTHONPATH=.deps → yt-dlp menemukan plugin PO-token (bgutil) + pot server di :4416
   const env = { ...process.env, PYTHONPATH: DEPS };
+  const js = await jsRuntimeArgs();
   const tries: string[][] = [
     [...px, ...ck],
     [...px, ...ck, "--extractor-args", "youtube:player_client=tv"],
@@ -74,12 +89,16 @@ export async function ytdlpFetch(
   ];
   let last = "";
   for (let i = 0; i < tries.length; i++) {
-    const r = await run([YTDLP, "--no-playlist", ...tries[i], ...args, url], { onLine, env });
+    const r = await run([YTDLP, "--no-playlist", ...js, ...tries[i], ...args, url], { onLine, env });
     last = r.stderr;
-    if (r.code === 0) return i === 0 ? "default" : "youtube:" + tries[i][tries[i].length - 1];
-    if (!BOT_RE.test(r.stderr)) break; // error bukan batasan akses — jangan diulang
+    if (r.code === 0) return {
+      client: i === 0 ? "default" : "youtube:" + tries[i][tries[i].length - 1],
+      stdout: r.stdout,
+    };
+    // error bot-check ATAU format kosong (client tanpa stream, mis. eksperimen SABR) → coba client berikutnya
+    if (!BOT_RE.test(r.stderr) && !FORMAT_RE.test(r.stderr)) break;
     if (i < tries.length - 1) {
-      log(`[sumber] YouTube menolak akses (bot-check) → coba varian client ${i + 2}/${tries.length}…`);
+      log(`[sumber] YouTube menolak akses / format kosong → coba varian client ${i + 2}/${tries.length}…`);
     }
   }
   throw new Error(
@@ -88,6 +107,17 @@ export async function ytdlpFetch(
     "Solusi: pakai URL file .mp4 langsung, ATAU unggah cookies.txt di form (bagian Cookies). " +
     "Kalau tetap tak ada stream (blokir level IP data center): nyalakan server dengan proxy residential — VL_PROXY=http://user:pass@host:port"
   );
+}
+
+/** Wrapper kompatibel: hanya butuh label client. */
+export async function ytdlpFetch(
+  args: string[],
+  url: string,
+  cookies: string | undefined,
+  log: (l: string) => void,
+  onLine?: (l: string) => void
+): Promise<string> {
+  return (await ytdlpRun(args, url, cookies, log, onLine)).client;
 }
 
 /** Ambil sumber: unduh via yt-dlp, atau salin dari hasil upload (<uploadId>:nama). */
@@ -111,8 +141,29 @@ export async function getSource(
     if (!/^https?:\/\//i.test(ref)) throw new Error("sumber harus URL http(s) atau upload");
     src = path.join(dir, "source.mp4");
     log("[sumber] mengunduh via yt-dlp…");
+    // video panjang: --max-filesize 500M menggagalkan unduhan penuh → pangkas ke 10 menit pertama
+    const extra: string[] = [];
     try {
-      const client = await ytdlpFetch(["-q", "--max-filesize", "500M", "-o", src], ref, cookies, log);
+      const exists = (p: string) => fs.stat(p).then(() => true).catch(() => false);
+      const deno = ["/home/z/my-project/pot-provider/deno", "/usr/local/bin/deno", "/usr/bin/deno"];
+      const node = ["/usr/bin/node", "/usr/local/bin/node"];
+      const jsr: string[] = [];
+      for (const p of deno) if (await exists(p)) { jsr.push("--js-runtimes", `deno:${p}`); break; }
+      if (!jsr.length) for (const p of node) if (await exists(p)) { jsr.push("--js-runtimes", `node:${p}`); break; }
+      const px = process.env.VL_PROXY ? ["--proxy", process.env.VL_PROXY] : [];
+      const ck = await cookieArgs(cookies, log);
+      const pr = await run(
+        [YTDLP, "--no-playlist", ...jsr, ...px, ...ck, "--print", "%(duration)s", ref],
+        { env: { ...process.env, PYTHONPATH: DEPS } }
+      );
+      const d = parseFloat(((pr.stdout || "").trim().split("\n").pop() || "").trim());
+      if (Number.isFinite(d) && d > 900) {
+        extra.push("--download-sections", "*0-600");
+        log(`[sumber] video ${Math.round(d / 60)} menit — batas demo 500MB → 10 menit pertama saja`);
+      }
+    } catch { /* durasi tak diketahui → unduh tanpa pemangkasan */ }
+    try {
+      const client = await ytdlpFetch(["-q", "--max-filesize", "500M", ...extra, "-o", src], ref, cookies, log);
       log("[sumber] unduhan selesai" + (client === "default" ? "" : ` (client ${client})`));
     } catch (e) {
       // toleransi lama: yt-dlp exit≠0 tapi file utuh sudah ada → lanjut

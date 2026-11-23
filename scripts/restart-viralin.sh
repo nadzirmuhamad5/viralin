@@ -17,9 +17,9 @@ fi
 
 # 1b. .deps (yt-dlp/whisper/edge-tts) hilang? pasang ulang (+ plugin PO-token)
 if [ ! -x "$BASE/.deps/bin/yt-dlp" ]; then
-  echo "[restart] .deps hilang → pip install faster-whisper edge-tts yt-dlp…"
+  echo "[restart] .deps hilang → pip install faster-whisper edge-tts yt-dlp yt-dlp-ejs…"
   mkdir -p "$BASE/.deps"
-  pip install --target="$BASE/.deps" -q faster-whisper edge-tts yt-dlp bgutil-ytdlp-pot-provider 2>&1 | grep -v WARNING | tail -1
+  pip install --target="$BASE/.deps" -q faster-whisper edge-tts yt-dlp yt-dlp-ejs bgutil-ytdlp-pot-provider 2>&1 | grep -v WARNING | tail -1
 fi
 
 # 1c. PO-token server (bgutil, Deno) — wajib utk YouTube dari IP data center
