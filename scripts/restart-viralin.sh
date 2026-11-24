@@ -23,6 +23,21 @@ if [ ! -x "$BASE/.deps/bin/yt-dlp" ]; then
 fi
 
 # 1c. PO-token server (bgutil, Deno) — wajib utk YouTube dari IP data center
+#     Recycle bisa menghapus pot-provider → pulihkan otomatis (deno + clone + install)
+if [ ! -x "$BASE/pot-provider/deno" ]; then
+  echo "[restart] deno hilang → unduh ulang…"
+  mkdir -p "$BASE/pot-provider"
+  (cd "$BASE/pot-provider" && curl -fsSL -o deno.zip \
+    https://github.com/denoland/deno/releases/latest/download/deno-x86_64-unknown-linux-gnu.zip \
+    && unzip -oq deno.zip && rm deno.zip && chmod +x deno)
+fi
+if [ ! -f "$BASE/pot-provider/bgutil-ytdlp-pot-provider/server/src/main.ts" ]; then
+  echo "[restart] kode server bgutil hilang → clone ulang…"
+  git clone -q --depth 1 https://github.com/Brainicism/bgutil-ytdlp-pot-provider.git \
+    "$BASE/pot-provider/bgutil-ytdlp-pot-provider"
+  (cd "$BASE/pot-provider/bgutil-ytdlp-pot-provider/server" \
+    && DENO_DIR="$BASE/pot-provider/deno-cache" "$BASE/pot-provider/deno" install)
+fi
 if [ -x "$BASE/pot-provider/deno" ] && ! curl -s --max-time 3 http://127.0.0.1:4416/ping >/dev/null; then
   echo "[restart] menyalakan PO-token server :4416…"
   (cd "$BASE/pot-provider/bgutil-ytdlp-pot-provider/server" \
