@@ -341,6 +341,62 @@ export async function zaiChat(system: string, prompt: string, log?: (l: string) 
   return (j.choices?.[0]?.message?.content || "").trim();
 }
 
+/* ── LLM utama: Coarena (https://coarena.ai, OpenAI-compatible) ──────────
+ * Key hanya di .env.local (di-gitignore): COARENA_API_KEY / COARENA_MODEL /
+ * COARENA_BASE_URL. Tanpa key → llmChat otomatis jatuh ke z-ai CLI.      */
+
+export function coarenaConfigured(): boolean {
+  return !!process.env.COARENA_API_KEY;
+}
+
+/** Chat completion Coarena — balas teks konten (fallback reasoning_content utk model reasoning). */
+export async function coarenaChat(system: string, prompt: string, log?: (l: string) => void): Promise<string> {
+  const base = (process.env.COARENA_BASE_URL || "https://coarena.ai/api/v1").replace(/\/$/, "");
+  const model = process.env.COARENA_MODEL || "deepseek-v4-1-flash-1017";
+  log?.(`[ai] coarena ${model}…`);
+  const body = JSON.stringify({
+    model,
+    messages: [...(system ? [{ role: "system", content: system }] : []), { role: "user", content: prompt }],
+    max_tokens: 2500,
+    temperature: 0.8,
+  });
+  const r = await run(["curl", "-s", "--max-time", "180", `${base}/chat/completions`,
+    "-H", `Authorization: Bearer ${process.env.COARENA_API_KEY}`,
+    "-H", "Content-Type: application/json", "--data-binary", body], { timeout: 200_000 });
+  let d: {
+    id?: string; error?: { message?: string }; choices?: Array<{ message?: { content?: string | null; reasoning_content?: string | null } }>;
+  };
+  try { d = JSON.parse(r.stdout); } catch { throw new Error("coarena: balasan tidak valid — " + tailErr(r.stderr || r.stdout)); }
+  if (d.error) throw new Error(`coarena: ${d.error.message || "error tanpa pesan"}`);
+  const m = d.choices?.[0]?.message || {};
+  const text = String(m.content || m.reasoning_content || "").trim();
+  if (!text) throw new Error("coarena: konten kosong (model geo-block / gagal generasi?)");
+  void rateReply(d.id).catch(() => {}); // rating best-effort — tak pernah menggagalkan job
+  return text;
+}
+
+/** POST /feedback — rate reply (rating "up"); butuh request_id dari id reply. */
+async function rateReply(requestId?: string): Promise<void> {
+  if (!requestId || !process.env.COARENA_API_KEY) return;
+  const base = (process.env.COARENA_BASE_URL || "https://coarena.ai/api/v1").replace(/\/$/, "");
+  await run(["curl", "-s", "--max-time", "20", "-X", "POST", `${base}/feedback`,
+    "-H", `Authorization: Bearer ${process.env.COARENA_API_KEY}`,
+    "-H", "Content-Type: application/json",
+    "--data-binary", JSON.stringify({ request_id: requestId, rating: "up" })], { timeout: 30_000 });
+}
+
+/** LLM unified: Coarena kalau dikonfigurasi → gagal? jatuh ke z-ai CLI. */
+export async function llmChat(system: string, prompt: string, log?: (l: string) => void): Promise<string> {
+  if (coarenaConfigured()) {
+    try {
+      return await coarenaChat(system, prompt, log);
+    } catch (e) {
+      log?.(`[ai] coarena gagal — ${String((e as Error).message).slice(0, 160)} → fallback z-ai CLI`);
+    }
+  }
+  return zaiChat(system, prompt, log);
+}
+
 /** Ambil objek JSON dari balasan LLM (tahan markdown fence). */
 export function extractJson<T>(s: string): T {
   const fenced = /```(?:json)?\s*([\s\S]*?)```/.exec(s);

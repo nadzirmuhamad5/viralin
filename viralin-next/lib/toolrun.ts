@@ -265,11 +265,11 @@ export async function runTool(job: Job, dir: string, log: Log): Promise<void> {
   async function motionStudio(_d: string, log: Log): Promise<void> {
     let judul: string; let items: string[]; let cta: string;
     if ((inputs.mode || "manual") === "ai") {
-      // mode otomatis: z-ai (GLM) menyusun hook/bullet/CTA dari satu topik
+      // mode otomatis: LLM (Coarena/z-ai) menyusun hook/bullet/CTA dari satu topik
       const topik = (inputs.topik || "").trim();
       if (!topik) throw new Error("Mode AI: isi Topik dulu (mis. \"tips hemat belanja mahasiswa\")");
-      log("[ai] mode otomatis — z-ai (GLM) menyusun hook/bullet/CTA…");
-      const raw = await mk.zaiChat(
+      log("[ai] mode otomatis — LLM menyusun hook/bullet/CTA…");
+      const raw = await mk.llmChat(
         "Kamu penulis konten short-video viral Indonesia. Susun struktur Motion Studio dari topik. " +
         "Balas HANYA JSON valid tanpa penjelasan: {\"judul\":\"HOOK KAPITAL maks 40 karakter\", " +
         "\"bullets\":[\"3-5 poin pendek maks 60 karakter, gaya santai-tajam\"], \"cta\":\"CTA maks 30 karakter\"}.",
@@ -335,7 +335,7 @@ export async function runTool(job: Job, dir: string, log: Log): Promise<void> {
     if (!naskah) {
       const topik = (inputs.topik || "").trim();
       if (!topik) throw new Error("isi topik ATAU naskah");
-      naskah = await mk.zaiChat(
+      naskah = await mk.llmChat(
         "Kamu penulis naskah video viral Indonesia (TikTok/Reels). Gaya: hook 3 detik pertama, 3 poin padat, CTA di akhir. Maks 130 kata. Keluarkan HANYA teks naskah tanpa label.",
         `Topik: ${topik}`, log);
       log(`[naskah] LLM menulis ${naskah.length} karakter`);
@@ -402,7 +402,7 @@ export async function runTool(job: Job, dir: string, log: Log): Promise<void> {
 
   async function titleOptimizer(_d: string, log: Log): Promise<void> {
     const platform = inputs.platform || "youtube";
-    const raw = await mk.zaiChat(
+    const raw = await mk.llmChat(
       "Kamu ahli judul viral pasar Indonesia. Balas HANYA JSON: {\"judul\":[{\"t\":\"...\",\"skor\":0-100,\"alasan\":\"...\"}]} — 8 judul terbaik, terurut skor tertinggi. Judul maks 70 karakter.",
       `Judul sekarang: "${inputs.judul}". Platform: ${platform}. Berikan 8 alternatif judul dengan skor potensi klik.`, log);
     const j = mk.extractJson<{ judul: Array<{ t: string; skor: number; alasan: string }> }>(raw);
@@ -413,7 +413,7 @@ export async function runTool(job: Job, dir: string, log: Log): Promise<void> {
   }
 
   async function viralTips(_d: string, log: Log): Promise<void> {
-    const raw = await mk.zaiChat(
+    const raw = await mk.llmChat(
       "Kamu strategist konten viral Indonesia. Balas HANYA JSON: {\"ide\":[{\"judul\":\"...\",\"hook\":\"...\",\"cta\":\"...\"}]} — 5 ide, hook maks 12 kata, CTA praktis.",
       `Niche akun: "${inputs.niche}". Konteks: pasar TikTok/Reels Indonesia 2026.`, log);
     const j = mk.extractJson<{ ide: Array<{ judul: string; hook: string; cta: string }> }>(raw);
@@ -426,7 +426,7 @@ export async function runTool(job: Job, dir: string, log: Log): Promise<void> {
 
   async function promptGen(_d: string, log: Log): Promise<void> {
     const target = inputs.target === "image" ? "AI image generator" : "AI video generator";
-    const out = await mk.zaiChat(
+    const out = await mk.llmChat(
       `Kamu prompt engineer. Ubah ide mentah menjadi 1 prompt ${target} tinggal pakai: subjek detail, komposisi, lighting, gaya kamera, mood, dan negative prompt. Bahasa Indonesia, format rapi.`,
       `Ide: ${inputs.ide}`, log);
     job.texts.push({ label: "Prompt siap pakai", body: out });
