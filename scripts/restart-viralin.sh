@@ -64,7 +64,7 @@ else
 fi
 
 # 4. Static server :8080 (video uji + logo)
-if ! curl -s -o /dev/null --max-time 5 http://127.0.0.1:8080/e2e-ujian.mp4; then
+if ! curl -s -o /dev/null --max-time 5 http://127.0.0.1:8080/; then
   echo "[restart] menyalakan http.server :8080 (download/)…"
   (cd "$BASE/download" && nohup python3 -m http.server 8080 --bind 127.0.0.1 > /tmp/http8080.log 2>&1 &)
 else
@@ -74,7 +74,7 @@ fi
 # 5. Tunggu sampai keduanya siap
 for i in $(seq 1 45); do
   A=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 http://127.0.0.1:3000/)
-  B=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 http://127.0.0.1:8080/e2e-ujian.mp4)
+  B=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 http://127.0.0.1:8080/)
   if [ "$A" = "200" ] && [ "$B" = "200" ]; then
     echo "[restart] ✅ semua hidup (production) — http://127.0.0.1:3000"
     exit 0
