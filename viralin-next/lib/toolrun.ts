@@ -7,6 +7,7 @@ import { run, tailErr } from "./exec";
 import { PRESETS, type Word } from "./captions";
 import type { Job } from "./store";
 import type { MotionStudioProps, WarnaId } from "./motion";
+import type { ViralKontenProps } from "./viral";
 
 /** Cache bundle Remotion (webpack) — sekali bundle, dipakai semua job berikutnya. */
 let bundleCache: string | null = null;
@@ -412,56 +413,133 @@ export async function runTool(job: Job, dir: string, log: Log): Promise<void> {
   }
 
   async function kontenTempel(_d: string, log: Log): Promise<void> {
+    const { VIRAL_FPS, VIRAL_HIGHLIGHT, alignScenes } = (await import("./viral"));
     const presetId = inputs.preset || job.captionPreset || "bold-impact";
-    let naskah = (inputs.naskah || "").trim();
-    if (!naskah) {
+    // 1. Naskah terstruktur: LLM → JSON {hook, points[], cta}; naskah manual → split kalimat
+    let hook = "", cta = "";
+    let points: string[] = [];
+    const manual = (inputs.naskah || "").trim();
+    if (manual) {
+      const kal = manual.split(/(?<=[.!?])\s+/).map((s) => s.trim()).filter(Boolean);
+      hook = kal.shift() || "";
+      const last = kal[kal.length - 1] || "";
+      if (kal.length > 1 && /follow|ikuti|subscribe|komen|dm|share|simpan/i.test(last)) cta = kal.pop() as string;
+      points = kal.slice(0, 4);
+    } else {
       const topik = (inputs.topik || "").trim();
       if (!topik) throw new Error("isi topik ATAU naskah");
-      naskah = await mk.llmChat(
-        "Kamu penulis naskah video viral Indonesia (TikTok/Reels). Gaya: hook 3 detik pertama, 3 poin padat, CTA di akhir. Maks 130 kata. Keluarkan HANYA teks naskah tanpa label.",
+      const raw = await mk.llmChat(
+        'Kamu penulis naskah video viral TikTok/Reels Indonesia. HOOK maks 8 kata yang bikin berhenti scroll (bisa provokatif/angka/pertanyaan), 3 POIN masing-masing maks 16 kata padat & spesifik, CTA maks 6 kata. Keluarkan HANYA JSON valid tanpa markdown: {"hook":"...","points":["...","...","..."],"cta":"..."}',
         `Topik: ${topik}`, log);
-      log(`[naskah] LLM menulis ${naskah.length} karakter`);
+      try {
+        const m = raw.match(/\{[\s\S]*\}/);
+        const j = JSON.parse(m ? m[0] : raw) as { hook?: string; points?: string[]; cta?: string };
+        hook = (j.hook || "").trim();
+        points = (Array.isArray(j.points) ? j.points : []).map((s) => String(s).trim()).filter(Boolean).slice(0, 4);
+        cta = (j.cta || "").trim();
+      } catch { /* fallback di bawah */ }
+      if (!hook) { // LLM nggak kasih JSON → raw text dibagi kalimat
+        const kal = raw.split(/(?<=[.!?])\s+/).map((s) => s.trim()).filter(Boolean);
+        hook = kal.shift() || topik;
+        points = kal.slice(0, 4);
+        cta = "FOLLOW UNTUK KONTEN SEPERTI INI";
+      }
     }
+    if (!hook) throw new Error("naskah kosong");
+    const texts = [hook, ...points, ...(cta ? [cta] : [])];
+    const kinds = ["hook", ...points.map(() => "poin"), ...(cta ? ["cta" as const] : [])] as ("hook" | "poin" | "cta")[];
+    const naskah = texts.join(" ");
     job.texts.push({ label: "Naskah voiceover", body: naskah });
+    log(`[struktur] hook "${hook.slice(0, 44)}" · ${points.length} poin · CTA "${cta.slice(0, 32)}"`);
+    // 2. TTS + whisper word-timing → batas scene presisi (bukan tebak per detik)
     const speech = path.join(dir, "speech.mp3");
     await mk.ttsSynth(naskah, inputs.voice || "id-ID-ArdiNeural", speech, "+0%", log);
     const wav = await mk.extractAudio(speech, dir);
     const info = await mk.transcribe(wav, dir, log);
     const words: Word[] = info.segments.flatMap((s) => s.words || []);
     const dur = info.duration + 0.8;
-    // background
-    let bgFile: string;
-    if ((inputs.bg || "ai") === "ai") {
-      bgFile = path.join(dir, "bg.png");
-      await mk.zaiImage(
-        `Background sinematik vertikal 9:16 untuk video narasi ber-captions besar di tengah-bawah: ${(inputs.topik || naskah.slice(0, 80))}. Tanpa teks, tanpa wajah closeup, gelap di area bawah tengah agar caption terbaca.`,
-        bgFile, log);
-    } else {
-      bgFile = path.join(dir, "bg.png");
-      const g = await run(["ffmpeg", "-y", "-hide_banner", "-f", "lavfi",
-        "-i", `gradients=s=720x1440:c0=0x050505:c1=0x123524:duration=1`, "-frames:v", "1", bgFile]);
-      if (g.code !== 0) throw new Error("gradient gagal: " + tailErr(g.stderr));
+    const bounds = alignScenes(texts, words, dur);
+    // 3. Latar per scene: hook + tiap poin gambar sendiri (CTA pakai ulang hook) — visual berganti terus
+    const pubDir = path.join(process.cwd(), "public", "konten", job.id);
+    await fs.mkdir(pubDir, { recursive: true });
+    const GRADS = [["0x0b0b0b", "0x123524"], ["0x0b0b14", "0x312e81"], ["0x140b0b", "0x7f1d1d"], ["0x0f0b14", "0x581c87"]];
+    const imgs: string[] = [];
+    for (let i = 0; i < texts.length; i++) {
+      if (kinds[i] === "cta" && imgs[0]) { imgs.push(imgs[0]); continue; }
+      const f = path.join(pubDir, `scene-${i}.png`);
+      if ((inputs.bg || "ai") === "ai" && kinds[i] !== "cta") {
+        const desc = kinds[i] === "hook"
+          ? `latar dramatis sinematik untuk video tentang: ${inputs.topik || hook}`
+          : `latar ilustratif untuk narasi tentang: ${texts[i]}`;
+        try {
+          await mk.zaiImage(
+            `Background sinematik vertikal 9:16, kontras tinggi, ${desc}. SANGAT PENTING: jangan menulis teks, huruf, angka, atau karakter tulisan apapun di dalam gambar; tanpa watermark; komposisi bersih; gelap di tengah-bawah agar caption terbaca.`,
+            f, log);
+        } catch (e) {
+          log(`[latar] scene ${i} gagal — pakai gradient (${String((e as Error)?.message || e).slice(0, 50)})`);
+        }
+      }
+      if (!(await fs.stat(f).catch(() => null))) {
+        const [c0, c1] = GRADS[i % GRADS.length];
+        const g = await run(["ffmpeg", "-y", "-hide_banner", "-f", "lavfi",
+          "-i", `gradients=s=540x960:c0=${c0}:c1=${c1}:duration=1`, "-frames:v", "1", f]);
+        if (g.code !== 0) throw new Error("gradient gagal: " + tailErr(g.stderr));
+      }
+      // renderer server → URL live /api/asset (file ditulis setelah bundle dibuat)
+      imgs.push(`http://127.0.0.1:3000/api/asset/konten/${job.id}/scene-${i}.png`);
     }
-    // ass pakai whisper word times relatif audio → langsung
-    const ass = (await import("./captions")).buildAss(words, { presetId, clipStart: 0, clipEnd: dur });
-    const assPath = path.join(dir, "content.ass");
-    await fs.writeFile(assPath, ass);
+    // font Anton utk caption Hormozi — recycle bisa menghapus public/fonts
+    const antonDst = path.join(process.cwd(), "public", "fonts", "Anton-Regular.ttf");
+    if (!(await fs.stat(antonDst).catch(() => null))) {
+      await fs.mkdir(path.dirname(antonDst), { recursive: true });
+      await fs.copyFile(path.join(process.cwd(), "assets", "caption-fonts", "Anton-Regular.ttf"), antonDst);
+    }
+    // 4. Render Remotion: hook punch-in + Ken Burns + karaoke + progress bar + CTA
+    const props: ViralKontenProps = {
+      fps: VIRAL_FPS,
+      highlight: VIRAL_HIGHLIGHT,
+      words: words.map((w) => ({ w: w.word, s: w.start, e: w.end })),
+      scenes: texts.map((text, i) => ({ kind: kinds[i], text, img: imgs[i], start: bounds[i].start, end: bounds[i].end })),
+    };
+    const { ensureBrowser } = await import("@remotion/renderer");
+    await ensureBrowser();
+    log("[remotion] chrome headless siap — bundling komposisi…");
+    if (!bundleCache) {
+      const { bundle } = await import("@remotion/bundler");
+      bundleCache = await bundle({
+        entryPoint: path.join(process.cwd(), "remotion", "index.ts"),
+        publicDir: path.join(process.cwd(), "public"),
+      });
+      log("[remotion] bundle siap (di-cache untuk job berikutnya)");
+    }
+    const { selectComposition, renderMedia } = await import("@remotion/renderer");
+    const comp = await selectComposition({ serveUrl: bundleCache, id: "ViralKonten", inputProps: props });
+    const silent = path.join(dir, "viral-silent.mp4");
+    log(`[remotion] render ${Math.round((comp.durationInFrames / comp.fps) * 10) / 10}s @${comp.fps}fps…`);
+    let last = 0;
+    await renderMedia({
+      composition: comp, serveUrl: bundleCache, codec: "h264", outputLocation: silent,
+      inputProps: props,
+      onProgress: ({ progress }) => {
+        const pct = Math.floor(progress * 100);
+        if (pct >= last + 25) { last = Math.min(pct - (pct % 25), 75); log(`[remotion] render ${last + 25}%`); }
+      },
+    });
+    // 5. Mux voiceover + fade — komposisi visual-only (sync pasti, render cepat)
     const out = path.join(dir, "konten-viral.mp4");
-    log("[render] menggabungkan background + suara + caption…");
-    const r = await run(["ffmpeg", "-y", "-hide_banner", "-loop", "1", "-i", bgFile, "-i", speech,
-      "-t", String(dur),
-      "-vf", `scale=540:960,subtitles=filename='${assPath}':fontsdir='${mk.FONTS_DIR}'`,
+    log("[mux] suara + video…");
+    const m = await run(["ffmpeg", "-y", "-hide_banner", "-i", silent, "-i", speech, "-t", String(dur),
       "-af", "afade=t=out:st=" + Math.max(dur - 0.8, 0) + ":d=0.8",
-      "-c:v", "libx264", "-preset", "veryfast", "-crf", "22", "-c:a", "aac", "-b:a", "160k",
-      "-pix_fmt", "yuv420p", "-shortest", "-movflags", "+faststart", out]);
-    if (r.code !== 0) throw new Error("render konten gagal: " + tailErr(r.stderr));
+      "-c:v", "copy", "-c:a", "aac", "-b:a", "160k", "-shortest", "-movflags", "+faststart", out]);
+    if (m.code !== 0) throw new Error("mux gagal: " + tailErr(m.stderr));
     const st = await fs.stat(out);
+    await fs.rm(pubDir, { recursive: true, force: true }).catch(() => {});
     await thumb(dir, out, "th-konten.jpg");
     job.clips.push({ file: "konten-viral.mp4", thumb: "th-konten.jpg", start: 0,
       end: Math.round(dur * 10) / 10, seconds: Math.round(dur * 10) / 10, bytes: st.size,
-      title: (naskah.slice(0, 50) || "Konten Viral"), lines: words.length, preset: presetId });
-    job.title = "VIRAL Content Creator";
-    log(`[konten] jadi ${Math.round(dur)}s (${(st.size / 1e6).toFixed(2)} MB)`);
+      title: (hook.slice(0, 50) || "Konten Viral"), lines: words.length, preset: presetId });
+    job.title = `VIRAL Content Creator — ${hook.slice(0, 40)}`;
+    log(`[konten] jadi ${Math.round(dur)}s, ${texts.length} scene (${(st.size / 1e6).toFixed(2)} MB)`);
   }
 
   async function transcript(_d: string, log: Log): Promise<void> {
