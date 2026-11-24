@@ -8,6 +8,9 @@ BASE=/home/z/my-project
 APP=$BASE/viralin-next
 LOGDIR=$BASE/deploy
 mkdir -p "$LOGDIR"
+# env opsional (mis. VL_PROXY=http://user:pass@host:port) — tulis sekali di deploy/env,
+# semua restart berikutnya otomatis memakainya.
+if [ -f "$BASE/deploy/env" ]; then . "$BASE/deploy/env"; fi
 
 # 1. node_modules hilang? install ulang dari cache (cepat)
 if [ ! -x "$APP/node_modules/.bin/next" ]; then
