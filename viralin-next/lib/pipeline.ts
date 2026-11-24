@@ -5,7 +5,7 @@ import { randomUUID } from "crypto";
 import { DATA, jobs, persist, type Clip, type Job, type Stage } from "./store";
 import { buildAss, DEFAULT_PRESET, type Word } from "./captions";
 import { runTool } from "./toolrun";
-import { ytdlpFetch, ytdlpRun } from "./mediakit";
+import { ytdlpFetch, ytdlpRun, probeDur, UPLOAD_DIR } from "./mediakit";
 
 const PY = process.env.PYTHON || "python3";
 const DEPS = "/home/z/my-project/.deps";
@@ -296,14 +296,31 @@ export async function runJob(job: Job): Promise<void> {
     // video diunduh per-segmen di tahap render.
     curStage = "download";
     setStage(job, "download", "run");
-    const meta = await ytdlpRun(
-      ["--no-warnings", "--skip-download", "--print", "%(duration)s", "--print", "%(title)s"],
-      job.url, job.inputs?.cookies, (l) => pushLog(job, l),
-    );
-    const metaLines = meta.stdout.trim().split("\n");
-    const metaDur = parseFloat(metaLines[0] || "0");
-    const realDur = Number.isFinite(metaDur) && metaDur > 0 ? metaDur : 0;
-    if (metaLines[1]) job.title = metaLines[1].slice(0, 60);
+    let realDur = 0;
+    if (job.url && job.url.startsWith("<uploadId>:")) {
+      // upload lokal — ffprobe langsung di file, tanpa yt-dlp
+      const upId = job.url.slice("<uploadId>:".length).replace(/[^a-zA-Z0-9._-]/g, "");
+      realDur = await probeDur(path.join(UPLOAD_DIR, upId));
+      job.title = upId.slice(0, 60);
+    } else {
+      try {
+        const meta = await ytdlpRun(
+          ["--no-warnings", "--skip-download", "--print", "%(duration)s", "--print", "%(title)s"],
+          job.url, job.inputs?.cookies, (l) => pushLog(job, l),
+        );
+        const metaLines = meta.stdout.trim().split("\n");
+        const metaDur = parseFloat(metaLines[0] || "0");
+        realDur = Number.isFinite(metaDur) && metaDur > 0 ? metaDur : 0;
+        if (metaLines[1]) job.title = metaLines[1].slice(0, 60);
+      } catch { /* file media langsung (mp4 dsb) — coba ffprobe di bawah */ }
+      if (!realDur) {
+        // yt-dlp sering tak membaca durasi mp4 langsung (http.server tanpa Range) → ffprobe
+        realDur = await probeDur(job.url).catch(() => 0);
+        if (realDur && !job.title) {
+          job.title = decodeURIComponent((job.url.split("/").pop() || "").split("?")[0]).slice(0, 60);
+        }
+      }
+    }
     if (!realDur) throw new Error("durasi video tidak diketahui dari metadata");
     job.sourceSeconds = r1(realDur);
     pushLog(job, `[sumber] video ${Math.round(realDur / 60)} menit — analisis dari subtitel (tanpa unduh media)`, true);
