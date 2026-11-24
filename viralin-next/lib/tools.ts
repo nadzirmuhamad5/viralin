@@ -162,6 +162,21 @@ export const TOOLS: ToolDef[] = [
           { value: "ya", label: "Dengan SFX (whoosh + pop + ding)" },
           { value: "tidak", label: "Tanpa audio" },
         ] },
+      { key: "narmode", label: "Narasi voice-over (Edge TTS)", type: "select", default: "tidak",
+        options: [
+          { value: "tidak", label: "Tanpa narasi — teks besar saja" },
+          { value: "auto", label: "Nyala — AI menulis narasinya" },
+        ], hint: "teks besar jadi gambaran besar; detailnya dibacakan suara + caption karaoke sinkron; durasi tiap bagian otomatis menyesuaikan panjang narasi" },
+      { key: "voice", label: "Suara narasi", type: "select", default: "id-ID-ArdiNeural",
+        options: [
+          { value: "id-ID-ArdiNeural", label: "Ardi — Pria 🇮🇩" },
+          { value: "id-ID-GadisNeural", label: "Gadis — Wanita 🇮🇩" },
+          { value: "en-US-AndrewMultilingualNeural", label: "Andrew — multibahasa" },
+          { value: "en-US-AvaMultilingualNeural", label: "Ava — multibahasa" },
+        ], hint: "dipakai kalau narasi nyala" },
+      { key: "narasi", label: "Narasi per bagian (opsional — menggantikan AI)", type: "textarea",
+        placeholder: "Baris 1 = narasi hook\nBaris 2 dst = narasi tiap poin\nBaris terakhir = narasi CTA",
+        hint: "1 baris = 1 bagian urut hook → poin → CTA; kosongkan baris = bagian itu tanpa narasi; isi apa pun di sini → AI tidak menulis" },
       { key: "simpanDrive", label: "Storage hasil", type: "select", default: "tidak",
         options: [
           { value: "tidak", label: "Simpan di server (download dari sini)" },

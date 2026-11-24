@@ -2,18 +2,20 @@
  *  Animasi SESUAI ISI: tiap poin dapat arketipe visual sendiri (21 arketipe) +,
  *  di mode AI/Berita, latar ILUSTRASI AI per poin (img) — jadi scene benar-benar
  *  menggambarkan topik yang dibicarakan, bukan sekadar ikon generik.
- *  Durasi tiap bagian diatur dari form (hookdur/bulletdur/ctadur, detik).
+ *  Durasi tiap bagian diatur dari form (hookdur/bulletdur/ctadur, detik) — dengan
+ *  NARASI (Edge TTS) durasi tiap bagian mengikuti panjang narasinya (p.durs dari
+ *  server) dan detailnya muncul sebagai CAPTION KARAOKE sinkron suara (p.words
+ *  dari whisper): teks besar = gambaran besar, narasi = detailnya.
  *  Dipakai bersama: <Player> di browser (live preview) DAN renderMedia di server. */
 import React from "react";
 import { AbsoluteFill, Audio, Img, Sequence, continueRender, delayRender, interpolate, spring, staticFile, useCurrentFrame, useVideoConfig } from "remotion";
 import {
   MOTION_CTA_START,
   PALETTES,
-  motionBulletFrames,
   motionDurationFrames,
-  motionHookFrames,
-  motionImgs,
+  motionSectionFrames,
   motionScenes,
+  motionImgs,
   type AnimId,
   type MotionStudioProps,
   type WarnaId,
@@ -24,6 +26,14 @@ import {
 if (typeof document !== "undefined" && !document.fonts.check('20px "Montserrat XB"')) {
   const handle = delayRender("montserrat-eb");
   new FontFace("Montserrat XB", `url(${staticFile("fonts/Montserrat-ExtraBold.ttf")})`)
+    .load()
+    .then((loaded) => { document.fonts.add(loaded); continueRender(handle); })
+    .catch(() => continueRender(handle));
+}
+/** Font Anton utk caption karaoke narasi (gaya Hormozi — sama dgn ViralKonten). */
+if (typeof document !== "undefined" && !document.fonts.check('20px "Anton VB"')) {
+  const handle = delayRender("anton-vb-motion");
+  new FontFace("Anton VB", `url(${staticFile("fonts/Anton-Regular.ttf")})`)
     .load()
     .then((loaded) => { document.fonts.add(loaded); continueRender(handle); })
     .catch(() => continueRender(handle));
@@ -533,18 +543,74 @@ const Cta: React.FC<{ text: string; accent: string }> = ({ text, accent }) => {
   );
 };
 
+/* ═══════════════ CAPTION KARAOKE NARASI ═══════════════ */
+
+/** Kata narasi {w: teks, s/e: detik absolut} — dari whisper di server. */
+type NarWord = { w: string; s: number; e: number };
+
+const CAP_FONT = '"Anton VB", "Anton", Impact, sans-serif';
+
+/** Caption karaoke gaya Hormozi: window geser 4 kata, kata aktif warna tema
+ *  + pop + glow — sinkron dgn voice-over Edge TTS (timing whisper). */
+const NarrCaption: React.FC<{ words: NarWord[]; start: number; end: number; accent: string }> =
+  ({ words, start, end, accent }) => {
+    const frame = useCurrentFrame();
+    const { fps } = useVideoConfig();
+    if (!words.length) return null;
+    const t = start + frame / fps; // frame LOKAL Sequence → detik absolut
+    const inScene = words.filter((w) => w.e > start + 0.01 && w.s < end - 0.01);
+    if (!inScene.length) return null;
+    let act = -1;
+    for (let i = 0; i < inScene.length; i++) {
+      if (t >= inScene[i].s && t < inScene[i].e) { act = i; break; }
+      if (inScene[i].e <= t) act = i; // gap antar kata → kata terakhir tetap tampil
+    }
+    if (act < 0) return null;
+    const win = inScene.slice(Math.max(0, act), act + 4);
+    const off = act - Math.max(0, act);
+    return (
+      <div style={{
+        position: "absolute", left: 26, right: 26, bottom: 108, display: "flex",
+        flexWrap: "wrap", justifyContent: "center", gap: "2px 9px", pointerEvents: "none",
+      }}>
+        {win.map((w, k) => {
+          const pop = spring({ frame: frame - (k - off) * 2, fps, config: { damping: 12, stiffness: 190, mass: 0.4 } });
+          const isAct = k === off;
+          const done = k < off;
+          return (
+            <span key={k} style={{
+              fontFamily: CAP_FONT, fontSize: 40, lineHeight: 1.15, textTransform: "uppercase",
+              color: isAct ? accent : done ? "#fff" : "#ffffffb3",
+              transform: `scale(${isAct ? 1.16 * (0.72 + 0.28 * pop) : 0.94 + 0.06 * pop})`,
+              transformOrigin: "center bottom",
+              WebkitTextStroke: "2.4px #000", paintOrder: "stroke fill",
+              textShadow: isAct ? `0 0 22px ${accent}66, 0 4px 16px rgba(0,0,0,.6)` : "0 4px 16px rgba(0,0,0,.6)",
+            }}>{w.w}</span>
+          );
+        })}
+      </div>
+    );
+  };
+
 /* ═══════════════ KOMPOSISI ═══════════════ */
 
 export const MotionStudio: React.FC<MotionStudioProps> = (props) => {
   const { judul, bullets, cta, warna, sfx } = props;
   const frame = useCurrentFrame();
+  const { fps } = useVideoConfig();
   const dur = motionDurationFrames(props);
   const pal = PALETTES[(warna || "green") as WarnaId] || PALETTES.green;
   const items = motionScenes(props);
   const imgs = motionImgs(props);
-  const hookF = motionHookFrames(props);
-  const bulletF = motionBulletFrames(props);
+  // posisi section dari durasi per-bagian (dgn narasi: mengikuti panjang narasi)
+  const secF = motionSectionFrames(props);
+  const hookF = secF[0];
+  const bStarts = items.map((_, i) => secF.slice(0, 1 + i).reduce((a, b) => a + b, 0));
   const ctaStart = MOTION_CTA_START(props);
+  // kata narasi utk caption karaoke (JSON dari server; kosong → preview tanpa caption)
+  const narrWords = React.useMemo<NarWord[]>(() => {
+    try { return JSON.parse(props.words || "[]") as NarWord[]; } catch { return []; }
+  }, [props.words]);
 
   const drift = interpolate(frame, [0, dur], [0, 1]);
   const bgStyle: React.CSSProperties = {
@@ -567,7 +633,7 @@ export const MotionStudio: React.FC<MotionStudioProps> = (props) => {
             <Audio src={staticFile("sfx/whoosh.wav")} volume={0.9} />
           </Sequence>
           {items.map((_, i) => (
-            <Sequence key={`pop-${i}`} from={hookF + i * bulletF}>
+            <Sequence key={`pop-${i}`} from={bStarts[i]}>
               <Audio src={staticFile("sfx/pop.wav")} volume={0.8} />
             </Sequence>
           ))}
@@ -582,12 +648,14 @@ export const MotionStudio: React.FC<MotionStudioProps> = (props) => {
         <AbsoluteFill style={{ alignItems: "center", justifyContent: "center", padding: 40 }}>
           <Judul text={judul || "VIRALIN"} accent={pal.accent} hookF={hookF} />
         </AbsoluteFill>
+        <NarrCaption words={narrWords} start={0} end={hookF / fps} accent={pal.accent} />
       </Sequence>
 
-      {/* Scene 2: POIN — animasi + ilustrasi sesuai isi */}
+      {/* Scene 2: POIN — animasi + ilustrasi sesuai isi + caption narasi */}
       {items.map((sc, i) => (
-        <Sequence key={`b-${i}`} from={hookF + i * bulletF} durationInFrames={bulletF}>
-          <BulletScene t={sc.t} a={sc.a} idx={i} accent={pal.accent} chip={pal.chip} bulletF={bulletF} img={imgs[i] || ""} />
+        <Sequence key={`b-${i}`} from={bStarts[i]} durationInFrames={secF[i + 1]}>
+          <BulletScene t={sc.t} a={sc.a} idx={i} accent={pal.accent} chip={pal.chip} bulletF={secF[i + 1]} img={imgs[i] || ""} />
+          <NarrCaption words={narrWords} start={bStarts[i] / fps} end={(bStarts[i] + secF[i + 1]) / fps} accent={pal.accent} />
         </Sequence>
       ))}
 
@@ -596,6 +664,7 @@ export const MotionStudio: React.FC<MotionStudioProps> = (props) => {
         <AbsoluteFill style={{ alignItems: "center", justifyContent: "center", padding: 40 }}>
           <Cta text={cta || "FOLLOW SEKARANG"} accent={pal.accent} />
         </AbsoluteFill>
+        <NarrCaption words={narrWords} start={ctaStart / fps} end={dur / fps} accent={pal.accent} />
       </Sequence>
 
       <div style={{ position: "absolute", bottom: 0, left: 0, height: 6, width: `${prog * 100}%`, background: pal.accent, opacity: 0.85 }} />

@@ -44,6 +44,16 @@ export type MotionStudioProps = {
   /** opsional — path ilustrasi latar per poin (relatif public/, mis. "motion/j-0.png").
    *  Diisi mode AI/Berita (gambar AI sesuai topik poin); kosong → latar gradien. */
   imgs?: string;
+  /** opsional — NARASI voice-over Edge TTS per bagian (1 baris: hook, tiap poin, CTA;
+   *  baris kosong = bagian tanpa narasi). Teks besar tetap "gambaran besar" —
+   *  detailnya dinarasikan + caption karaoke sinkron (dari whisper). */
+  narasi?: string;
+  /** opsional — durasi tiap bagian dalam DETIK (hook,poin…,CTA) setelah durasi narasi
+   *  diukur server; diisi server saja. Kosong → ikuti durasi form (hookdur/dst). */
+  durs?: string;
+  /** opsional — kata-kata narasi untuk caption karaoke, JSON [{w,s,e}] detik absolut
+   *  (timeline video). Diisi server; kosong → caption tidak dirender. */
+  words?: string;
 };
 
 export const PALETTES: Record<WarnaId, { bg: string; bg2: string; accent: string; chip: string; label: string }> = {
@@ -59,9 +69,37 @@ const durSec = (v: string | undefined, def: number, min: number, max: number) =>
   const n = Number(String(v ?? "").replace(",", "."));
   return Number.isFinite(n) && n >= min && n <= max ? n : def;
 };
-export const motionHookFrames = (p: MotionStudioProps) => Math.round(durSec(p.hookdur, 2.5, 1, 10) * MOTION_FPS);
-export const motionBulletFrames = (p: MotionStudioProps) => Math.round(durSec(p.bulletdur, 2, 0.5, 10) * MOTION_FPS);
-export const motionCtaFrames = (p: MotionStudioProps) => Math.round(durSec(p.ctadur, 3, 1, 15) * MOTION_FPS);
+export const motionHookSec = (p: MotionStudioProps) => durSec(p.hookdur, 2.5, 1, 10);
+export const motionBulletSec = (p: MotionStudioProps) => durSec(p.bulletdur, 2, 0.5, 10);
+export const motionCtaSec = (p: MotionStudioProps) => durSec(p.ctadur, 3, 1, 15);
+
+/** Durasi (detik) tiap bagian [hook, poin…, CTA] — kalau server sudah mengukur
+ *  durasi narasinya (p.durs), bagian itu bisa lebih panjang dari form. */
+export function motionSectionDurs(p: MotionStudioProps): number[] {
+  const form = [motionHookSec(p), ...motionBullets(p).map(() => motionBulletSec(p)), motionCtaSec(p)];
+  if (p.durs) {
+    const d = p.durs.split(",").map((v) => {
+      const n = Number(String(v).replace(",", "."));
+      return Number.isFinite(n) && n >= 0.4 && n <= 60 ? n : 0;
+    });
+    if (d.length === form.length && d.every((x) => x > 0)) return d;
+  }
+  return form;
+}
+
+/** Durasi tiap bagian dalam FRAME — sumber tunggal posisi section di komposisi. */
+export const motionSectionFrames = (p: MotionStudioProps): number[] =>
+  motionSectionDurs(p).map((d) => Math.max(1, Math.round(d * MOTION_FPS)));
+
+export const motionHookFrames = (p: MotionStudioProps) => motionSectionFrames(p)[0];
+export const motionBulletFrames = (p: MotionStudioProps) => Math.round(motionBulletSec(p) * MOTION_FPS);
+export const motionCtaFrames = (p: MotionStudioProps) => Math.round(motionCtaSec(p) * MOTION_FPS);
+
+/** Narasi per bagian (urut hook, poin…, CTA) dari form baris-per-bagian. */
+export function motionNarrations(p: MotionStudioProps): string[] {
+  const lines = (p.narasi || "").split(/\n+/).map((s) => s.trim());
+  return motionSectionDurs(p).map((_, i) => lines[i] || "");
+}
 
 export function motionBullets(p: MotionStudioProps): string[] {
   return p.bullets.split(/\n+/).map((s) => s.trim()).filter(Boolean).slice(0, 12);
@@ -119,13 +157,14 @@ export function motionImgs(p: MotionStudioProps): string[] {
   });
 }
 
-/** Durasi total komposisi dalam frame (hook + n poin + CTA) — mengikuti durasi form. */
+/** Durasi total komposisi dalam frame (hook + n poin + CTA) — ikut durasi narasi
+ *  kalau server mengukurnya (p.durs), kalau tidak ikuti durasi form. */
 export function motionDurationFrames(p: MotionStudioProps): number {
-  return motionHookFrames(p) + motionBullets(p).length * motionBulletFrames(p) + motionCtaFrames(p);
+  return motionSectionFrames(p).reduce((a, b) => a + b, 0);
 }
 
 export const MOTION_CTA_START = (p: MotionStudioProps) =>
-  motionHookFrames(p) + motionBullets(p).length * motionBulletFrames(p);
+  motionSectionFrames(p).slice(0, -1).reduce((a, b) => a + b, 0);
 
 export function motionDefaultProps(): MotionStudioProps {
   return {

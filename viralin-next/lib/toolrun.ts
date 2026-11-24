@@ -6,7 +6,7 @@ import * as mk from "./mediakit";
 import { run, tailErr } from "./exec";
 import { PRESETS, type Word } from "./captions";
 import type { Job } from "./store";
-import type { MotionStudioProps, WarnaId } from "./motion";
+import { motionSectionDurs, type MotionStudioProps, type WarnaId } from "./motion";
 import type { ViralKontenProps } from "./viral";
 
 /** Cache bundle Remotion (webpack) — sekali bundle, dipakai semua job berikutnya. */
@@ -265,6 +265,7 @@ export async function runTool(job: Job, dir: string, log: Log): Promise<void> {
 
   async function motionStudio(_d: string, log: Log): Promise<void> {
     let judul: string; let items: string[]; let cta: string; let anims: string[] = []; let imgsP: string[] = [];
+    let hookNar = ""; let ctaNar = ""; let bulletNars: string[] = []; // narasi per bagian dari LLM
     if ((inputs.mode || "manual") === "ai" || (inputs.mode || "manual") === "berita") {
       const isBerita = (inputs.mode || "manual") === "berita";
       let material: string;
@@ -294,7 +295,10 @@ export async function runTool(job: Job, dir: string, log: Log): Promise<void> {
           ? "Bahan di bawah adalah headline berita NYATA — buat versi viralnya TANPA mengarang fakta tambahan; sudut pandang/opini boleh. "
           : "") +
         "Balas HANYA JSON valid tanpa penjelasan: {\"judul\":\"HOOK KAPITAL maks 40 karakter\", " +
-        "\"bullets\":[{\"t\":\"poin pendek maks 60 karakter\",\"anim\":\"money\",\"img\":\"deskripsi visual 2-5 kata\"}], \"cta\":\"CTA maks 30 karakter\"}. " +
+        "\"n\":\"1 kalimat narasi pembuka yg menjelaskan hook (yg dibaca voice-over)\", " +
+        "\"bullets\":[{\"t\":\"poin pendek maks 60 karakter\",\"anim\":\"money\",\"img\":\"deskripsi visual 2-5 kata\"," +
+        "\"n\":\"1-2 kalimat narasi detail poin ini (yg dibaca voice-over)\"}], \"cta\":\"CTA maks 30 karakter\", " +
+        "\"cn\":\"1 kalimat ajakan penutup yg enak dibaca voice-over\"}. " +
         "Buat 4-8 poin. Untuk TIAP poin pilih anim yang paling cocok dengan isinya, salah satu dari: " +
         "money (uang/hemat/belanja), phone (HP/aplikasi/sosmed), check (langkah/cara/tips), heart (cinta/suka), " +
         "fire (viral/trending), alert (larangan/awas), clock (waktu/cepat), chat (obrolan/pendapat), " +
@@ -305,23 +309,27 @@ export async function runTool(job: Job, dir: string, log: Log): Promise<void> {
         material, log);
       const m = raw.match(/\{[\s\S]*\}/);
       if (!m) throw new Error("mode AI: LLM tidak membalas JSON — coba topik berbeda");
-      let j: { judul?: string; bullets?: unknown; cta?: string };
+      let j: { judul?: string; bullets?: unknown; cta?: string; n?: unknown; cn?: unknown };
       try { j = JSON.parse(m[0]); } catch { throw new Error("mode AI: JSON dari LLM rusak — jalankan ulang"); }
       judul = String(j.judul || "VIRALIN").toUpperCase().slice(0, 40);
+      hookNar = String(j.n || "").trim().slice(0, 240);
+      ctaNar = String(j.cn || "").trim().slice(0, 220);
       if (Array.isArray(j.bullets)) {
-        // terima bentuk baru {t, anim, img} DAN bentuk lama string biasa
+        // terima bentuk baru {t, anim, img, n} DAN bentuk lama string biasa
         const parsed = (j.bullets as unknown[]).slice(0, 12).map((b) => {
-          if (typeof b === "string") return { t: b.trim(), a: "", g: "" };
-          const o = (b || {}) as { t?: unknown; anim?: unknown; img?: unknown };
+          if (typeof b === "string") return { t: b.trim(), a: "", g: "", n: "" };
+          const o = (b || {}) as { t?: unknown; anim?: unknown; img?: unknown; n?: unknown };
           return {
             t: String(o.t ?? "").trim(),
             a: String(o.anim ?? "").trim(),
             g: String(o.img ?? "").replace(/["\n\r]/g, " ").replace(/\s+/g, " ").trim().slice(0, 60),
+            n: String(o.n ?? "").trim().slice(0, 300),
           };
         }).filter((x) => x.t);
         items = parsed.map((x) => x.t);
         anims = parsed.map((x) => x.a);
         imgsP = parsed.map((x) => x.g);
+        bulletNars = parsed.map((x) => x.n);
       } else items = [];
       if (!items.length) throw new Error("mode AI: bullets kosong dari LLM — jalankan ulang");
       cta = String(j.cta || "FOLLOW SEKARANG").slice(0, 40);
@@ -362,6 +370,79 @@ export async function runTool(job: Job, dir: string, log: Log): Promise<void> {
       }
       if (made) props.imgs = rels.join("\n");
       log(`[ilustrasi] ${made}/${items.length} latar AI dibuat`);
+    }
+    // NARASI Edge TTS — teks besar = gambaran besar; detailnya dibacakan suara dan
+    // muncul sebagai caption karaoke sinkron (timing dari whisper).
+    // Sumber teks: form narasi > field `n` dari LLM (mode AI/Berita) > LLM auto (mode Manual).
+    let narrMp3 = "";
+    const narLines = (inputs.narasi || "").split(/\n+/).map((s) => s.trim());
+    const narmode = (inputs.narmode || "tidak");
+    if (narmode !== "tidak" || narLines.some(Boolean)) {
+      const nSec = 1 + items.length + 1; // hook + tiap poin + CTA
+      let narr: string[];
+      if (narLines.some(Boolean)) {
+        narr = Array.from({ length: nSec }, (_, i) => narLines[i] || "");
+        log(`[narasi] teks dari form (${narLines.filter(Boolean).length}/${nSec} bagian)`);
+      } else if (hookNar || ctaNar || bulletNars.some(Boolean)) {
+        narr = [hookNar, ...items.map((_, i) => bulletNars[i] || ""), ctaNar];
+        log("[narasi] teks dari LLM (field n — mode AI/Berita)");
+      } else {
+        log("[narasi] LLM menyusun narasi per bagian…");
+        const raw2 = await mk.llmChat(
+          "Kamu penulis naskah video pendek Indonesia. Dari struktur motion graphic berikut, tulis NARASI voice-over " +
+          "per bagian: bagian 1 pembuka (hook), bagian 2 dst tiap poin, bagian terakhir ajakan penutup. Bahasa santai " +
+          "mengalir, 1-2 kalimat per bagian, langsung isi tanpa basa-basi. Balas HANYA JSON valid: " +
+          `{"nar":["bagian 1","bagian 2",…]} — jumlah elemen PERSIS ${nSec} sesuai urutan.`,
+          JSON.stringify({ judul, bullets: items, cta }), log);
+        const m2 = raw2.match(/\{[\s\S]*\}/);
+        if (!m2) throw new Error("narasi auto: LLM tidak membalas JSON — isi narasi manual atau coba lagi");
+        let j2: { nar?: unknown };
+        try { j2 = JSON.parse(m2[0]); } catch { throw new Error("narasi auto: JSON LLM rusak — coba lagi atau isi manual"); }
+        const arr = Array.isArray(j2.nar) ? (j2.nar as unknown[]).map((x) => String(x ?? "").trim()) : [];
+        narr = Array.from({ length: nSec }, (_, i) => arr[i] || "");
+      }
+      if (narr.some(Boolean)) {
+        const voice = inputs.voice || "id-ID-ArdiNeural";
+        const formDurs = motionSectionDurs(props);
+        const LEAD = 0.35, TAIL = 0.55; // napas sebelum/sesudah narasi di tiap bagian
+        const durs: number[] = []; const mp3s: string[] = []; const delays: number[] = [];
+        let acc = 0;
+        for (let i = 0; i < nSec; i++) {
+          if (!narr[i]) { durs.push(formDurs[i]); }
+          else {
+            const mp3 = path.join(dir, `nar-${i}.mp3`);
+            try {
+              await mk.ttsSynth(narr[i], voice, mp3, "+0%", log);
+              const d = await mk.probeDur(mp3);
+              mp3s.push(mp3);
+              delays.push(Math.round((acc + LEAD) * 1000));
+              // scene memanjang kalau narasinya lebih panjang dari durasi form
+              durs.push(Math.max(formDurs[i], Math.round((d + LEAD + TAIL) * 20) / 20));
+            } catch (e) {
+              durs.push(formDurs[i]);
+              log(`[narasi] bagian ${i + 1} gagal — lanjut tanpa narasi (${String((e as Error)?.message || e).slice(0, 60)})`);
+            }
+          }
+          acc += durs[i];
+        }
+        props.durs = durs.join(",");
+        if (mp3s.length) {
+          // satu track narasi: tiap bagian di-delay ke posisi awal scene-nya (adelay + amix)
+          narrMp3 = path.join(dir, "narasi.mp3");
+          const fc = mp3s.map((_, k) => `[${k}:a]adelay=${delays[k]}:all=1[d${k}]`).join(";") +
+            `;${mp3s.map((_, k) => `[d${k}]`).join("")}amix=inputs=${mp3s.length}:normalize=0:duration=longest[a]`;
+          const r = await run(["ffmpeg", "-y", "-hide_banner",
+            ...mp3s.flatMap((f) => ["-i", f]), "-filter_complex", fc, "-map", "[a]",
+            "-c:a", "libmp3lame", "-q:a", "4", narrMp3]);
+          if (r.code !== 0) throw new Error("track narasi gagal: " + tailErr(r.stderr));
+          // whisper → timing kata utk caption karaoke (absolut, timeline video)
+          const wav = await mk.extractAudio(narrMp3, dir);
+          const info = await mk.transcribe(wav, dir, log);
+          const narrWords = info.segments.flatMap((s) => s.words || []);
+          props.words = JSON.stringify(narrWords.map((w) => ({ w: w.word, s: w.start, e: w.end })));
+          log(`[narasi] ${mp3s.length}/${nSec} bagian bersuara · ${narrWords.length} kata caption`);
+        }
+      }
     }
     // Untuk RENDER: gambar per-job tidak ada di snapshot bundle (bundle dibuat sekali
     // di awal proses, gambar ditulis belakangan) → arahkan renderer ke URL live dari
@@ -406,6 +487,17 @@ export async function runTool(job: Job, dir: string, log: Log): Promise<void> {
         if (pct >= last + 25) { last = Math.min(pct - (pct % 25), 75); log(`[remotion] render ${last + 25}%`); }
       },
     });
+    // mux narasi + SFX komposisi — VO dominan (amix normalize=0), alimiter jaga peak
+    if (narrMp3) {
+      const final = path.join(dir, "motion-final.mp4");
+      log("[mux] narasi + sfx + video…");
+      const fc = "[0:a]volume=0.75[sfx];[1:a]volume=1[vo];[sfx][vo]amix=inputs=2:duration=first:normalize=0,alimiter=limit=0.95[a]";
+      const m = await run(["ffmpeg", "-y", "-hide_banner", "-i", out, "-i", narrMp3,
+        ...(sfxOn ? ["-filter_complex", fc, "-map", "0:v", "-map", "[a]"] : ["-map", "0:v", "-map", "1:a"]),
+        "-c:v", "copy", "-c:a", "aac", "-b:a", "160k", "-movflags", "+faststart", final]);
+      if (m.code === 0) await fs.rename(final, out);
+      else log(`[mux] narasi gagal di-gabung — video tetap tanpa suara (${tailErr(m.stderr).slice(0, 80)})`);
+    }
     const st = await fs.stat(out);
     job.files.push({ file: "motion-studio.mp4", label: `Motion Studio — ${judul}`, kind: "video" });
     job.title = `Motion Studio (Remotion) — ${judul}`;
