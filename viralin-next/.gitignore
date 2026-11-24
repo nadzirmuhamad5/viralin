@@ -5,4 +5,5 @@ out/
 .env.*
 !.env.example
 data/
+public/motion/
 *.log

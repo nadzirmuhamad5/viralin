@@ -1,16 +1,18 @@
 /** Komposisi Remotion "Motion Studio" — 9:16 540x960, 30fps.
- *  Animasi SESUAI ISI: tiap bullet dapat arketipe visual sendiri (money/phone/check/
- *  heart/fire/alert/clock/chat/rocket/counter/slide) — ikon SVG beranimasi + motion
- *  terus-menerus (partikel, float, pulse), bukan sekadar slide masuk.
+ *  Animasi SESUAI ISI: tiap poin dapat arketipe visual sendiri (21 arketipe) +,
+ *  di mode AI/Berita, latar ILUSTRASI AI per poin (img) — jadi scene benar-benar
+ *  menggambarkan topik yang dibicarakan, bukan sekadar ikon generik.
+ *  Durasi tiap bagian diatur dari form (hookdur/bulletdur/ctadur, detik).
  *  Dipakai bersama: <Player> di browser (live preview) DAN renderMedia di server. */
 import React from "react";
-import { AbsoluteFill, Audio, Sequence, continueRender, delayRender, interpolate, spring, staticFile, useCurrentFrame, useVideoConfig } from "remotion";
+import { AbsoluteFill, Audio, Img, Sequence, continueRender, delayRender, interpolate, spring, staticFile, useCurrentFrame, useVideoConfig } from "remotion";
 import {
-  MOTION_BULLET_LEN,
-  MOTION_BULLET_START,
   MOTION_CTA_START,
   PALETTES,
+  motionBulletFrames,
   motionDurationFrames,
+  motionHookFrames,
+  motionImgs,
   motionScenes,
   type AnimId,
   type MotionStudioProps,
@@ -210,6 +212,153 @@ const SceneIcon: React.FC<{ a: AnimId; text: string; accent: string; chip: strin
         </g>
       </>);
     }
+    case "kuliner": { // cangkir + uap mengepul
+      const steam = (k: number) => Math.sin(frame / 6 + k * 1.4) * 10;
+      return wrap(
+        <g transform={`scale(${pop}) translate(0 ${Math.sin(frame / 10) * 5})`}>
+          {[0, 1, 2].map((k) => (
+            <path key={k} d={`M ${-28 + k * 28} -58 q 8 ${-16 + steam(k)} 0 ${-30 + steam(k) * 0.6}`}
+              fill="none" stroke="#fff" strokeWidth={6} strokeLinecap="round" opacity={0.6 + 0.3 * Math.sin(frame / 4 + k)} />
+          ))}
+          <path d="M -50 -18 L 50 -18 L 40 44 A 14 14 0 0 1 26 56 L -26 56 A 14 14 0 0 1 -40 44 Z"
+            fill={chip} stroke={accent} strokeWidth={5} />
+          <path d="M 50 -8 A 22 22 0 0 1 50 34" fill="none" stroke={accent} strokeWidth={7} />
+          <ellipse cy={-18} rx={50} ry={9} fill={GOLD} stroke={GOLD_D} strokeWidth={3} />
+        </g>,
+      );
+    }
+    case "bola": { // bola spin + patch
+      return wrap(
+        <g transform={`translate(0 ${Math.sin(frame / 8) * 8})`}>
+          <g transform={`scale(${pop})`}>
+            <circle r={54} fill="#fff" stroke={GOLD_D} strokeWidth={4} />
+            <g transform={`rotate(${frame * 6})`}>
+              <path d="M 0 -22 L 21 -7 L 13 18 L -13 18 L -21 -7 Z" fill={GOLD_D} />
+              {[0, 72, 144, 216, 288].map((deg) => (
+                <line key={deg} transform={`rotate(${deg})`} x1={0} y1={-22} x2={0} y2={-54} stroke={GOLD_D} strokeWidth={4} />
+              ))}
+            </g>
+          </g>
+        </g>,
+      );
+    }
+    case "belajar": { // buku + halaman berganti
+      const flip = (frame % 40) / 40;
+      const pw = 50 * Math.sin(Math.PI * flip);
+      return wrap(
+        <g transform={`scale(${pop}) translate(0 ${Math.sin(frame / 11) * 5})`}>
+          <path d="M 0 -46 L -78 -38 L -78 46 L 0 38 Z" fill={chip} stroke={accent} strokeWidth={4} />
+          <path d="M 0 -46 L 78 -38 L 78 46 L 0 38 Z" fill={chip} stroke={accent} strokeWidth={4} />
+          {[-40, -16, 8, 32].map((yy, k) => (
+            <line key={k} x1={-64} y1={yy} x2={-14} y2={yy + 6} stroke="#fff" strokeWidth={4} opacity={0.7} />
+          ))}
+          {[-40, -16, 8, 32].map((yy, k) => (
+            <line key={`r${k}`} x1={14} y1={yy + 6} x2={64} y2={yy} stroke="#fff" strokeWidth={4} opacity={0.7} />
+          ))}
+          <path d={`M 0 -46 L ${pw} ${-46 + 8 * Math.sin(Math.PI * flip)} L ${pw} ${38 + 8 * Math.sin(Math.PI * flip)} L 0 38 Z`} fill="#fff" opacity={0.85} />
+        </g>,
+      );
+    }
+    case "medis": { // palang + garis EKG menggambar
+      const beat = 1 + 0.1 * Math.max(0, Math.sin(frame / 3)) * Math.max(0, Math.sin(frame / 6));
+      return wrap(<>
+        <g transform={`scale(${pop * beat})`}>
+          <rect x={-16} y={-52} width={32} height={96} rx={8} fill={RED} />
+          <rect x={-48} y={-16} width={96} height={32} rx={8} fill={RED} />
+        </g>
+        <g transform="translate(0 82)">
+          <path d="M -90 0 L -40 0 L -28 -22 L -12 26 L 0 -10 L 10 0 L 90 0" fill="none" stroke="#fff" strokeWidth={5}
+            strokeLinecap="round" strokeLinejoin="round" strokeDasharray="220" strokeDashoffset={220 * (1 - Math.min(frame / 40, 1))} />
+        </g>
+      </>);
+    }
+    case "musik": { // equalizer + not bergoyang
+      const bars = [0, 1, 2, 3, 4].map((k) => 20 + 34 * Math.abs(Math.sin(frame / 4 + k * 0.9)));
+      return wrap(<>
+        {bars.map((h, k) => (
+          <rect key={k} x={-96 + k * 26} y={70 - h} width={16} height={h} rx={6} fill={k % 2 ? accent : GOLD} opacity={0.9} />
+        ))}
+        <g transform={`translate(28 -30) rotate(${Math.sin(frame / 5) * 12}) scale(${pop})`}>
+          <circle cx={-30} cy={44} r={16} fill="#fff" />
+          <rect x={-18} y={-44} width={9} height={88} fill="#fff" transform="rotate(8 -18 -44)" />
+          <path d="M -9 -44 q 30 8 38 34 q -14 -12 -38 -8 Z" fill="#fff" />
+        </g>
+      </>);
+    }
+    case "travel": { // pesawat melintas + awan + jalur putus-putus
+      const tx = -70 + Math.min(frame * 3.2, 140);
+      return wrap(<>
+        <path d="M -110 70 A 150 150 0 0 1 110 -60" fill="none" stroke="#fff" strokeWidth={3} strokeDasharray="10 14" opacity={0.5} />
+        {[[-70, -70], [60, 10], [-40, -100]].map(([x, y], k) => (
+          <ellipse key={k} cx={x + Math.sin(frame / 9 + k) * 8} cy={y} rx={34} ry={14} fill="#fff" opacity={0.35} />
+        ))}
+        <g transform={`translate(${tx} ${30 - frame * 0.9}) rotate(-8) scale(${pop * 0.9})`}>
+          <path d="M -34 6 L 30 -14 L 40 -6 L -6 16 L -10 34 L -20 22 L -34 6 Z" fill={accent} stroke="#fff" strokeWidth={3} strokeLinejoin="round" />
+        </g>
+      </>);
+    }
+    case "cuaca": { // matahari + awan + hujan
+      return wrap(<>
+        <circle cx={-52} cy={-46} r={26} fill={GOLD} opacity={0.9} />
+        {[...Array(8)].map((_, k) => (
+          <line key={k} transform={`rotate(${k * 45 + frame * 1.5} -52 -46)`} x1={-52} y1={-82} x2={-52} y2={-92} stroke={GOLD} strokeWidth={5} strokeLinecap="round" />
+        ))}
+        <g transform={`translate(0 ${Math.sin(frame / 10) * 4}) scale(${pop})`}>
+          <ellipse cx={-18} cy={0} rx={52} ry={26} fill="#fff" opacity={0.92} />
+          <ellipse cx={30} cy={-12} rx={34} ry={22} fill="#fff" opacity={0.92} />
+          <ellipse cx={-52} cy={-6} rx={30} ry={18} fill="#fff" opacity={0.92} />
+          {[0, 1, 2, 3].map((k) => {
+            const ry = (frame * 4 + k * 22) % 44;
+            return <line key={k} x1={-44 + k * 28} y1={30 + ry} x2={-48 + k * 28} y2={44 + ry} stroke={accent} strokeWidth={5} strokeLinecap="round" opacity={1 - ry / 44} />;
+          })}
+        </g>
+      </>);
+    }
+    case "game": { // gamepad + tombol kelap-kelip
+      const bl = (k: number) => 0.55 + 0.45 * Math.abs(Math.sin(frame / 5 + k));
+      return wrap(
+        <g transform={`translate(${Math.sin(frame / 3) * 4} 0) scale(${pop})`}>
+          <rect x={-96} y={-42} width={192} height={84} rx={40} fill={chip} stroke={accent} strokeWidth={5} />
+          <rect x={-62} y={-16} width={34} height={12} rx={5} fill="#fff" />
+          <rect x={-51} y={-27} width={12} height={34} rx={5} fill="#fff" />
+          {[0, 1].map((k) => (
+            <circle key={k} cx={56 + k * 26} cy={k % 2 ? -10 : 8} r={11} fill={k % 2 ? ROSE : GOLD} opacity={bl(k)} />
+          ))}
+        </g>,
+      );
+    }
+    case "mega": { // megafon berita + gelombang suara
+      return wrap(
+        <g transform={`rotate(${Math.sin(frame / 4) * 6}) scale(${pop})`}>
+          <path d="M -96 -14 L -24 -30 L -24 46 L -96 30 Z" fill={accent} stroke="#fff" strokeWidth={4} strokeLinejoin="round" />
+          <ellipse cx={-24} cy={8} rx={13} ry={38} fill={GOLD} stroke={GOLD_D} strokeWidth={3} />
+          <rect x={-88} y={26} width={20} height={30} rx={6} fill={chip} stroke="#fff" strokeWidth={3} />
+          {[0, 1, 2].map((k) => (
+            <path key={k} d={`M 4 ${-30 + k * 26} A ${46 + k * 14} ${46 + k * 14} 0 0 1 4 ${38 + k * 26}`}
+              fill="none" stroke="#fff" strokeWidth={5} strokeLinecap="round"
+              opacity={0.7 * Math.abs(Math.sin(frame / 6 - k * 0.7))} />
+          ))}
+        </g>,
+      );
+    }
+    case "target": { // panah melesat ke papan target
+      const hit = Math.min(frame / 18, 1);
+      const ax = -100 + 100 * (1 - Math.pow(1 - hit, 2));
+      const bang = frame > 16 ? 1 + 0.16 * Math.max(0, Math.sin((frame - 16) / 5)) : 1;
+      return wrap(<>
+        <g transform={`scale(${pop * bang})`}>
+          {[0, 1, 2].map((k) => (
+            <circle key={k} r={56 - k * 18} fill={k % 2 ? chip : RED} stroke="#fff" strokeWidth={3} />
+          ))}
+          <circle r={4} fill="#fff" />
+        </g>
+        <g transform={`translate(${ax} 0) rotate(${Math.min(frame * 3, 42)})`}>
+          <line x1={-20} y1={0} x2={26} y2={0} stroke={GOLD} strokeWidth={7} strokeLinecap="round" />
+          <path d="M 26 0 L 12 -9 L 12 9 Z" fill={GOLD} />
+          <path d="M -20 0 L -30 -10 L -26 0 L -30 10 Z" fill={ROSE} />
+        </g>
+      </>);
+    }
     default: { // slide — bintang berputar + orbit
       return wrap(<>
         <circle r={70} fill="none" stroke={accent} strokeWidth={2} opacity={0.35} strokeDasharray="6 14"
@@ -248,51 +397,95 @@ const Particles: React.FC<{ accent: string; dur: number }> = ({ accent, dur }) =
 
 /* ═══════════════ SCENE ═══════════════ */
 
-const Judul: React.FC<{ text: string; accent: string }> = ({ text, accent }) => {
+/** Kata beranimasi (kinetic typography) — pop per kata + float halan terus. */
+const Word: React.FC<{ w: string; i: number; size: number }> = ({ w, i, size }) => {
+  const frame = useCurrentFrame();
+  const { fps } = useVideoConfig();
+  const s = spring({ frame: frame - i * 2, fps, config: { damping: 12, stiffness: 170, mass: 0.45 } });
+  const floatY = Math.sin(frame / 9 + i * 1.1) * 3;
+  return (
+    <span style={{
+      display: "inline-block", marginRight: size * 0.26, color: "#fff",
+      transform: `translateY(${(1 - s) * 30 + floatY}px) scale(${0.6 + 0.4 * s}) rotate(${(1 - s) * (i % 2 ? 7 : -7)}deg)`,
+      opacity: Math.min(s * 2.5, 1),
+    }}>{w}</span>
+  );
+};
+
+const Judul: React.FC<{ text: string; accent: string; hookF: number }> = ({ text, accent, hookF }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
   const size = text.length > 26 ? 38 : text.length > 16 ? 48 : 58;
   const s = spring({ frame, fps, config: { damping: 12, stiffness: 140, mass: 0.6 } });
+  // Ken Burns masuk + exit keluar di akhir scene hook (bukan hard cut)
+  const zoom = interpolate(frame, [0, hookF], [1, 1.06], { extrapolateRight: "clamp", extrapolateLeft: "clamp" });
+  const exitP = interpolate(frame, [hookF - 10, hookF - 1], [0, 1], { extrapolateRight: "clamp", extrapolateLeft: "clamp" });
   const floatY = Math.sin(frame / 10) * 5;
-  const y = interpolate(s, [0, 1], [90, 0]) + floatY * Math.min(s, 1);
-  const scaleX = interpolate(s, [0, 1], [0.6, 1]);
-  const lineW = interpolate(frame, [6, 30], [0, 240], { extrapolateRight: "clamp", extrapolateLeft: "clamp" });
+  const y = (interpolate(s, [0, 1], [90, 0]) + floatY) * (1 - exitP) - exitP * 44;
+  const scale = interpolate(s, [0, 1], [0.6, 1]) * zoom * (1 - 0.07 * exitP);
+  const lineW = interpolate(frame, [6, 30], [0, 240], { extrapolateRight: "clamp", extrapolateLeft: "clamp" }) * (1 - exitP);
   const q = /\?/.test(text);
   return (
-    <div style={{ position: "relative", transform: `translateY(${y}px) scale(${scaleX})`, opacity: Math.min(s * 2, 1), textAlign: "center" }}>
-      <div style={{ fontSize: size, lineHeight: 1.15, color: "#fff", textShadow: "0 4px 24px rgba(0,0,0,.45)", whiteSpace: "pre-wrap", letterSpacing: -0.5 }}>
-        {text}
+    <div style={{ position: "relative", transform: `translateY(${y}px) scale(${scale})`, opacity: Math.min(s * 2, 1) * (1 - exitP), textAlign: "center" }}>
+      <div style={{ fontSize: size, lineHeight: 1.18, textShadow: "0 4px 24px rgba(0,0,0,.45)", letterSpacing: -0.5 }}>
+        {text.split(/\s+/).map((w, i) => <Word key={i} w={w} i={i} size={size} />)}
       </div>
       {q && (
         <div style={{
           position: "absolute", right: -10, top: -18, fontSize: size * 0.95, color: accent,
           transform: `rotate(${Math.sin(frame / 6) * 14}deg) translateY(${Math.sin(frame / 8) * 9}px)`,
-          opacity: Math.max(0, Math.min(1, (frame - 14) / 10)), textShadow: "0 4px 24px rgba(0,0,0,.45)",
+          opacity: Math.max(0, Math.min(1, (frame - 14) / 10)) * (1 - exitP), textShadow: "0 4px 24px rgba(0,0,0,.45)",
         }}>?</div>
       )}
-      <div style={{ marginTop: 14, height: 8, width: lineW, borderRadius: 4, background: accent, margin: "14px auto 0" }} />
+      <div style={{ height: 8, width: lineW, borderRadius: 4, background: accent, margin: "14px auto 0" }} />
     </div>
   );
 };
 
-const BulletScene: React.FC<{ t: string; a: AnimId; idx: number; accent: string; chip: string }> =
-  ({ t, a, idx, accent, chip }) => {
+const BulletScene: React.FC<{ t: string; a: AnimId; idx: number; accent: string; chip: string; bulletF: number; img: string }> =
+  ({ t, a, idx, accent, chip, bulletF, img }) => {
     const frame = useCurrentFrame();
+    const { fps } = useVideoConfig();
+    // entrance pop + exit keluar + Ken Burns zoom — scene tidak pernah hard cut
+    const enter = spring({ frame, fps, config: { damping: 13, stiffness: 150, mass: 0.55 } });
+    const exitP = interpolate(frame, [bulletF - 10, bulletF - 1], [0, 1], { extrapolateRight: "clamp", extrapolateLeft: "clamp" });
+    const zoom = interpolate(frame, [0, bulletF], [1, 1.05], { extrapolateRight: "clamp", extrapolateLeft: "clamp" });
     const floatY = Math.sin(frame / 12 + idx * 1.3) * 6;
+    const y = (1 - enter) * 52 - exitP * 40 + floatY;
+    const scale = (0.86 + 0.14 * enter) * zoom * (1 - 0.08 * exitP);
+    const op = Math.min(enter * 2, 1) * (1 - exitP);
     const fs = t.length > 46 ? 25 : t.length > 32 ? 28 : 31;
+    const glow = 26 + Math.sin(frame / 5 + idx) * 14;
     return (
       <AbsoluteFill style={{ alignItems: "center", justifyContent: "center", padding: 40 }}>
-        {a === "alert" && <AbsoluteFill style={{ background: RED, opacity: 0.09 + 0.07 * Math.abs(Math.sin(frame / 2)) }} />}
-        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 20, transform: `translateY(${floatY}px)`, maxWidth: 480 }}>
-          <div style={{ height: 195, display: "flex", alignItems: "center", justifyContent: "center", filter: `drop-shadow(0 10px 30px ${accent}55)` }}>
+        {img && (
+          <AbsoluteFill>
+            <Img src={staticFile(img)} style={{
+              width: "100%", height: "100%", objectFit: "cover",
+              transform: `scale(${1.12 + 0.08 * Math.min(frame / Math.max(bulletF, 1), 1)})`,
+              opacity: 0.55 * Math.min(enter * 2, 1) * (1 - exitP),
+            }} />
+            <AbsoluteFill style={{ background: `linear-gradient(180deg, ${chip}aa 0%, ${chip}f2 100%)` }} />
+          </AbsoluteFill>
+        )}
+        {a === "alert" && <AbsoluteFill style={{ background: RED, opacity: (0.09 + 0.07 * Math.abs(Math.sin(frame / 2))) * (1 - exitP) }} />}
+        <div style={{
+          display: "flex", flexDirection: "column", alignItems: "center", gap: 20, maxWidth: 480,
+          transform: `translateY(${y}px) scale(${scale})`, opacity: op,
+        }}>
+          <div style={{ height: 195, display: "flex", alignItems: "center", justifyContent: "center", filter: `drop-shadow(0 10px ${glow}px ${accent}66)` }}>
             <SceneIcon a={a} text={t} accent={accent} chip={chip} />
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
-            <div style={{ flexShrink: 0, width: 46, height: 46, borderRadius: 23, background: accent, color: "#0b0b0b", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 21, fontWeight: 900, boxShadow: `0 0 20px ${accent}66` }}>
+            <div style={{
+              flexShrink: 0, width: 46, height: 46, borderRadius: 23, background: accent, color: "#0b0b0b",
+              display: "flex", alignItems: "center", justifyContent: "center", fontSize: idx > 8 ? 16 : 21, fontWeight: 900,
+              boxShadow: `0 0 ${glow}px ${accent}66`, transform: `scale(${Math.min(enter * 1.6, 1)})`,
+            }}>
               {idx + 1}
             </div>
-            <div style={{ background: `${chip}cc`, borderRadius: 18, padding: "15px 20px", fontSize: fs, lineHeight: 1.25, color: "#fff", fontWeight: 700 }}>
-              {t}
+            <div style={{ background: `${chip}cc`, borderRadius: 18, padding: "15px 20px", fontSize: fs, lineHeight: 1.3, color: "#fff", fontWeight: 700 }}>
+              {t.split(/\s+/).map((w, i) => <Word key={i} w={w} i={i + 3} size={fs} />)}
             </div>
           </div>
         </div>
@@ -309,11 +502,30 @@ const Cta: React.FC<{ text: string; accent: string }> = ({ text, accent }) => {
   const bob = Math.sin(frame / 4) * 7;
   const size = text.length > 22 ? 34 : text.length > 14 ? 40 : 46;
   const glow = 40 + Math.sin(frame / 3) * 22;
+  // confetti meledak berulang di sekeliling pill
+  const t0 = ((frame - 4) % 28 + 28) % 28;
+  const conf = [...Array(20)].map((_, k) => {
+    const ang = (k / 20) * Math.PI * 2 + rnd(k) * 0.6;
+    const sp = 90 + rnd(k + 9) * 110;
+    const x = Math.cos(ang) * sp * (t0 / 30);
+    const y = Math.sin(ang) * sp * (t0 / 30) + 0.045 * t0 * t0;
+    return (
+      <div key={k} style={{
+        position: "absolute", left: `calc(50% + ${x}px)`, top: `calc(50% + ${y}px)`,
+        width: 10, height: 14, borderRadius: 2, background: [GOLD, ROSE, accent, "#fff"][k % 4],
+        transform: `translate(-50%,-50%) rotate(${ang * 57 + frame * 5}deg)`,
+        opacity: Math.max(0, 1 - t0 / 24),
+      }} />
+    );
+  });
   return (
     <div style={{ transform: `scale(${s * pulse})`, opacity: Math.min(s * 2, 1), display: "flex", alignItems: "center", gap: 14 }}>
-      <div style={{ position: "relative", overflow: "hidden", background: accent, borderRadius: 26, padding: "24px 36px", fontSize: size, fontWeight: 900, color: "#0b0b0b", letterSpacing: 1, boxShadow: `0 0 ${glow}px ${accent}88`, whiteSpace: "pre-wrap", textAlign: "center" }}>
-        {text}
-        <div style={{ position: "absolute", top: 0, bottom: 0, width: 64, left: shine, background: "linear-gradient(100deg, transparent, rgba(255,255,255,.55), transparent)", transform: "skewX(-18deg)" }} />
+      <div style={{ position: "relative" }}>
+        {conf}
+        <div style={{ position: "relative", overflow: "hidden", background: accent, borderRadius: 26, padding: "24px 36px", fontSize: size, fontWeight: 900, color: "#0b0b0b", letterSpacing: 1, boxShadow: `0 0 ${glow}px ${accent}88`, whiteSpace: "pre-wrap", textAlign: "center" }}>
+          {text}
+          <div style={{ position: "absolute", top: 0, bottom: 0, width: 64, left: shine, background: "linear-gradient(100deg, transparent, rgba(255,255,255,.55), transparent)", transform: "skewX(-18deg)" }} />
+        </div>
       </div>
       <span style={{ fontSize: 44, color: accent, transform: `translateX(${bob}px)`, textShadow: `0 0 ${glow}px ${accent}` }}>→</span>
     </div>
@@ -328,6 +540,9 @@ export const MotionStudio: React.FC<MotionStudioProps> = (props) => {
   const dur = motionDurationFrames(props);
   const pal = PALETTES[(warna || "green") as WarnaId] || PALETTES.green;
   const items = motionScenes(props);
+  const imgs = motionImgs(props);
+  const hookF = motionHookFrames(props);
+  const bulletF = motionBulletFrames(props);
   const ctaStart = MOTION_CTA_START(props);
 
   const drift = interpolate(frame, [0, dur], [0, 1]);
@@ -351,7 +566,7 @@ export const MotionStudio: React.FC<MotionStudioProps> = (props) => {
             <Audio src={staticFile("sfx/whoosh.wav")} volume={0.9} />
           </Sequence>
           {items.map((_, i) => (
-            <Sequence key={`pop-${i}`} from={MOTION_BULLET_START + i * MOTION_BULLET_LEN}>
+            <Sequence key={`pop-${i}`} from={hookF + i * bulletF}>
               <Audio src={staticFile("sfx/pop.wav")} volume={0.8} />
             </Sequence>
           ))}
@@ -362,16 +577,16 @@ export const MotionStudio: React.FC<MotionStudioProps> = (props) => {
       ) : null}
 
       {/* Scene 1: HOOK */}
-      <Sequence from={0} durationInFrames={MOTION_BULLET_START}>
+      <Sequence from={0} durationInFrames={hookF}>
         <AbsoluteFill style={{ alignItems: "center", justifyContent: "center", padding: 40 }}>
-          <Judul text={judul || "VIRALIN"} accent={pal.accent} />
+          <Judul text={judul || "VIRALIN"} accent={pal.accent} hookF={hookF} />
         </AbsoluteFill>
       </Sequence>
 
-      {/* Scene 2: BULLETS — animasi sesuai isi */}
+      {/* Scene 2: POIN — animasi + ilustrasi sesuai isi */}
       {items.map((sc, i) => (
-        <Sequence key={`b-${i}`} from={MOTION_BULLET_START + i * MOTION_BULLET_LEN} durationInFrames={MOTION_BULLET_LEN}>
-          <BulletScene t={sc.t} a={sc.a} idx={i} accent={pal.accent} chip={pal.chip} />
+        <Sequence key={`b-${i}`} from={hookF + i * bulletF} durationInFrames={bulletF}>
+          <BulletScene t={sc.t} a={sc.a} idx={i} accent={pal.accent} chip={pal.chip} bulletF={bulletF} img={imgs[i] || ""} />
         </Sequence>
       ))}
 

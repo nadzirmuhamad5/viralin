@@ -263,7 +263,7 @@ export async function runTool(job: Job, dir: string, log: Log): Promise<void> {
   }
 
   async function motionStudio(_d: string, log: Log): Promise<void> {
-    let judul: string; let items: string[]; let cta: string; let anims: string[] = [];
+    let judul: string; let items: string[]; let cta: string; let anims: string[] = []; let imgsP: string[] = [];
     if ((inputs.mode || "manual") === "ai" || (inputs.mode || "manual") === "berita") {
       const isBerita = (inputs.mode || "manual") === "berita";
       let material: string;
@@ -293,11 +293,14 @@ export async function runTool(job: Job, dir: string, log: Log): Promise<void> {
           ? "Bahan di bawah adalah headline berita NYATA — buat versi viralnya TANPA mengarang fakta tambahan; sudut pandang/opini boleh. "
           : "") +
         "Balas HANYA JSON valid tanpa penjelasan: {\"judul\":\"HOOK KAPITAL maks 40 karakter\", " +
-        "\"bullets\":[{\"t\":\"poin pendek maks 60 karakter\",\"anim\":\"money\"}], \"cta\":\"CTA maks 30 karakter\"}. " +
-        "Untuk TIAP poin pilih anim yang paling cocok dengan isinya, salah satu dari: " +
+        "\"bullets\":[{\"t\":\"poin pendek maks 60 karakter\",\"anim\":\"money\",\"img\":\"deskripsi visual 2-5 kata\"}], \"cta\":\"CTA maks 30 karakter\"}. " +
+        "Buat 4-8 poin. Untuk TIAP poin pilih anim yang paling cocok dengan isinya, salah satu dari: " +
         "money (uang/hemat/belanja), phone (HP/aplikasi/sosmed), check (langkah/cara/tips), heart (cinta/suka), " +
         "fire (viral/trending), alert (larangan/awas), clock (waktu/cepat), chat (obrolan/pendapat), " +
-        "rocket (naik/sukses), counter (angka/statistik), slide (lainnya).",
+        "rocket (naik/sukses), counter (angka/statistik), kuliner (makanan/minuman/kopi), bola (olahraga), " +
+        "belajar (sekolah/buku), medis (kesehatan/sakit), musik (lagu/konser), travel (liburan/wisata), " +
+        "cuaca (hujan/musim), game (game/esports), mega (berita/pengumuman), target (tujuan/mimpi), slide (lainnya). " +
+        "img = deskripsi VISUAL untuk ilustrasi latar poin itu (objek/pemandangan khas topiknya, tanpa teks).",
         material, log);
       const m = raw.match(/\{[\s\S]*\}/);
       if (!m) throw new Error("mode AI: LLM tidak membalas JSON — coba topik berbeda");
@@ -305,21 +308,26 @@ export async function runTool(job: Job, dir: string, log: Log): Promise<void> {
       try { j = JSON.parse(m[0]); } catch { throw new Error("mode AI: JSON dari LLM rusak — jalankan ulang"); }
       judul = String(j.judul || "VIRALIN").toUpperCase().slice(0, 40);
       if (Array.isArray(j.bullets)) {
-        // terima bentuk baru {t, anim} DAN bentuk lama string biasa
-        const parsed = (j.bullets as unknown[]).slice(0, 5).map((b) => {
-          if (typeof b === "string") return { t: b.trim(), a: "" };
-          const o = (b || {}) as { t?: unknown; anim?: unknown };
-          return { t: String(o.t ?? "").trim(), a: String(o.anim ?? "").trim() };
+        // terima bentuk baru {t, anim, img} DAN bentuk lama string biasa
+        const parsed = (j.bullets as unknown[]).slice(0, 12).map((b) => {
+          if (typeof b === "string") return { t: b.trim(), a: "", g: "" };
+          const o = (b || {}) as { t?: unknown; anim?: unknown; img?: unknown };
+          return {
+            t: String(o.t ?? "").trim(),
+            a: String(o.anim ?? "").trim(),
+            g: String(o.img ?? "").replace(/["\n\r]/g, " ").replace(/\s+/g, " ").trim().slice(0, 60),
+          };
         }).filter((x) => x.t);
         items = parsed.map((x) => x.t);
         anims = parsed.map((x) => x.a);
+        imgsP = parsed.map((x) => x.g);
       } else items = [];
       if (!items.length) throw new Error("mode AI: bullets kosong dari LLM — jalankan ulang");
       cta = String(j.cta || "FOLLOW SEKARANG").slice(0, 40);
-      log(`[ai] hasil: judul "${judul}" · ${items.length} bullet · CTA "${cta}" · anim: ${anims.filter(Boolean).join(",") || "auto"}`);
+      log(`[ai] hasil: judul "${judul}" · ${items.length} poin · CTA "${cta}" · anim: ${anims.filter(Boolean).join(",") || "auto"}`);
     } else {
       judul = (inputs.judul || "VIRALIN").toUpperCase().slice(0, 40);
-      items = (inputs.bullets || "").split(/\n+/).map((s) => s.trim()).filter(Boolean).slice(0, 5);
+      items = (inputs.bullets || "").split(/\n+/).map((s) => s.trim()).filter(Boolean).slice(0, 12);
       cta = (inputs.cta || "").slice(0, 40);
     }
     const warna = (["green", "blue", "orange", "pink"].includes(inputs.warna || "") ? inputs.warna : "green") as WarnaId;
@@ -328,8 +336,33 @@ export async function runTool(job: Job, dir: string, log: Log): Promise<void> {
     const props: MotionStudioProps = {
       judul, bullets: items.join("\n"), cta, warna, sfx: sfxOn,
       ...(animsLine ? { anims: animsLine } : {}),
+      ...(inputs.hookdur ? { hookdur: inputs.hookdur } : {}),
+      ...(inputs.bulletdur ? { bulletdur: inputs.bulletdur } : {}),
+      ...(inputs.ctadur ? { ctadur: inputs.ctadur } : {}),
     };
-    log(`[remotion] hook "${judul}" · ${items.length} bullet · CTA "${cta}" · tema ${warna}${sfxOn ? " +sfx" : ""}`);
+    // Ilustrasi AI per poin (mode AI/Berita) — latar scene menggambarkan topik masing-masing
+    if ((inputs.mode || "manual") !== "manual" && (inputs.ilustrasi || "ya") !== "tidak" && imgsP.some(Boolean)) {
+      await fs.mkdir(path.join(process.cwd(), "public", "motion"), { recursive: true });
+      const tag = path.basename(dir);
+      const rels: string[] = [];
+      let made = 0;
+      for (let i = 0; i < items.length; i++) {
+        const pr = (imgsP[i] || "").slice(0, 60);
+        if (!pr) { rels.push(""); continue; }
+        const rel = `motion/${tag}-${i}.png`;
+        try {
+          await mk.zaiImage(`ilustrasi ${pr}, gaya poster flat minimalis modern, warna mencolok, tanpa teks`,
+            path.join(process.cwd(), "public", rel), log);
+          rels.push(rel); made++;
+        } catch (e) {
+          rels.push("");
+          log(`[ilustrasi] poin ${i + 1} gagal — lewati (${String((e as Error)?.message || e).slice(0, 60)})`);
+        }
+      }
+      if (made) props.imgs = rels.join("\n");
+      log(`[ilustrasi] ${made}/${items.length} latar AI dibuat`);
+    }
+    log(`[remotion] hook "${judul}" · ${items.length} poin · CTA "${cta}" · tema ${warna}${sfxOn ? " +sfx" : ""}`);
     // pastikan font tersedia di public/ (recycle bisa menghapusnya — copy ulang)
     const fontDst = path.join(process.cwd(), "public", "fonts", "Montserrat-ExtraBold.ttf");
     if (!(await fs.stat(fontDst).catch(() => null))) {
