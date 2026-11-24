@@ -460,7 +460,8 @@ const BulletScene: React.FC<{ t: string; a: AnimId; idx: number; accent: string;
       <AbsoluteFill style={{ alignItems: "center", justifyContent: "center", padding: 40 }}>
         {img && (
           <AbsoluteFill>
-            <Img src={staticFile(img)} style={{
+            {/* URL absolut (http…) → renderer server; relatif → staticFile (Player browser) */}
+            <Img src={img.startsWith("http") ? img : staticFile(img)} style={{
               width: "100%", height: "100%", objectFit: "cover",
               transform: `scale(${1.12 + 0.08 * Math.min(frame / Math.max(bulletF, 1), 1)})`,
               opacity: 0.55 * Math.min(enter * 2, 1) * (1 - exitP),

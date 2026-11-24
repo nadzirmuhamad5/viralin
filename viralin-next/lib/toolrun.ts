@@ -362,6 +362,17 @@ export async function runTool(job: Job, dir: string, log: Log): Promise<void> {
       if (made) props.imgs = rels.join("\n");
       log(`[ilustrasi] ${made}/${items.length} latar AI dibuat`);
     }
+    // Untuk RENDER: gambar per-job tidak ada di snapshot bundle (bundle dibuat sekali
+    // di awal proses, gambar ditulis belakangan) → arahkan renderer ke URL live dari
+    // server app (/api/asset membaca disk saat request). Player browser tetap pakai
+    // path relatif via staticFile (public/ Next dilayani live di sisi client).
+    let renderProps = props;
+    if (props.imgs) {
+      renderProps = {
+        ...props,
+        imgs: (props.imgs || "").split("\n").map((p) => (p ? `http://127.0.0.1:3000/api/asset/${p}` : "")).join("\n"),
+      };
+    }
     log(`[remotion] hook "${judul}" · ${items.length} poin · CTA "${cta}" · tema ${warna}${sfxOn ? " +sfx" : ""}`);
     // pastikan font tersedia di public/ (recycle bisa menghapusnya — copy ulang)
     const fontDst = path.join(process.cwd(), "public", "fonts", "Montserrat-ExtraBold.ttf");
@@ -382,13 +393,13 @@ export async function runTool(job: Job, dir: string, log: Log): Promise<void> {
       log("[remotion] bundle siap (di-cache untuk job berikutnya)");
     }
     const { selectComposition, renderMedia } = await import("@remotion/renderer");
-    const comp = await selectComposition({ serveUrl: bundleCache, id: "MotionStudio", inputProps: props });
+    const comp = await selectComposition({ serveUrl: bundleCache, id: "MotionStudio", inputProps: renderProps });
     const out = path.join(dir, "motion-studio.mp4");
     log(`[remotion] render ${Math.round((comp.durationInFrames / comp.fps) * 10) / 10}s @${comp.fps}fps…`);
     let last = 0;
     await renderMedia({
       composition: comp, serveUrl: bundleCache, codec: "h264", outputLocation: out,
-      inputProps: props,
+      inputProps: renderProps,
       onProgress: ({ progress }) => {
         const pct = Math.floor(progress * 100);
         if (pct >= last + 25) { last = Math.min(pct - (pct % 25), 75); log(`[remotion] render ${last + 25}%`); }

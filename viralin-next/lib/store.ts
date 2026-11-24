@@ -59,6 +59,7 @@ async function ensureLoaded(): Promise<void> {
           if (j.status === "run" || j.status === "queued") {
             j.status = "fail";
             j.error = j.error || "proses lama mati (sandbox di-recycle) — jalankan ulang";
+            void persist(j); // tandai di disk juga — jangan biarkan "run" abadi di JSON
           }
           jobs.set(j.id, j);
         }
