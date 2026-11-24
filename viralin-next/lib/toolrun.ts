@@ -264,20 +264,41 @@ export async function runTool(job: Job, dir: string, log: Log): Promise<void> {
 
   async function motionStudio(_d: string, log: Log): Promise<void> {
     let judul: string; let items: string[]; let cta: string; let anims: string[] = [];
-    if ((inputs.mode || "manual") === "ai") {
-      // mode otomatis: LLM (Coarena/z-ai) menyusun hook/bullet/CTA + memilih anim per poin
-      const topik = (inputs.topik || "").trim();
-      if (!topik) throw new Error("Mode AI: isi Topik dulu (mis. \"tips hemat belanja mahasiswa\")");
-      log("[ai] mode otomatis — LLM menyusun hook/bullet/CTA…");
+    if ((inputs.mode || "manual") === "ai" || (inputs.mode || "manual") === "berita") {
+      const isBerita = (inputs.mode || "manual") === "berita";
+      let material: string;
+      if (isBerita) {
+        // headline dari scheduler (inputs.headline) atau ambil RSS langsung (jalankan dari form)
+        let headline = (inputs.headline || "").trim();
+        const sumber = (inputs.sumber || "").trim();
+        if (!headline) {
+          const { newsHeadlines } = await import("./berita");
+          const picks = await newsHeadlines(inputs.topik || "", log, 8);
+          if (!picks.length) throw new Error("mode Berita: RSS tidak punya item — coba rubrik lain");
+          headline = picks[0].title;
+        }
+        log(`[berita] headline: "${headline.slice(0, 72)}"${sumber ? ` — ${sumber}` : ""}`);
+        material = `Headline berita hari ini: "${headline}"${sumber ? ` — sumber: ${sumber}` : ""}${inputs.topik ? ` — rubrik: ${inputs.topik}` : ""}`;
+        log("[ai] mode berita — LLM menyusun hook/bullet/CTA dari headline…");
+      } else {
+        // mode otomatis: LLM (Coarena/z-ai) menyusun hook/bullet/CTA + memilih anim per poin
+        const topik = (inputs.topik || "").trim();
+        if (!topik) throw new Error("Mode AI: isi Topik dulu (mis. \"tips hemat belanja mahasiswa\")");
+        log("[ai] mode otomatis — LLM menyusun hook/bullet/CTA…");
+        material = `Topik/niche: ${topik}`;
+      }
       const raw = await mk.llmChat(
-        "Kamu penulis konten short-video viral Indonesia. Susun struktur Motion Studio dari topik. " +
+        "Kamu penulis konten short-video viral Indonesia. Susun struktur Motion Studio dari bahan yang diberikan. " +
+        (isBerita
+          ? "Bahan di bawah adalah headline berita NYATA — buat versi viralnya TANPA mengarang fakta tambahan; sudut pandang/opini boleh. "
+          : "") +
         "Balas HANYA JSON valid tanpa penjelasan: {\"judul\":\"HOOK KAPITAL maks 40 karakter\", " +
         "\"bullets\":[{\"t\":\"poin pendek maks 60 karakter\",\"anim\":\"money\"}], \"cta\":\"CTA maks 30 karakter\"}. " +
         "Untuk TIAP poin pilih anim yang paling cocok dengan isinya, salah satu dari: " +
         "money (uang/hemat/belanja), phone (HP/aplikasi/sosmed), check (langkah/cara/tips), heart (cinta/suka), " +
         "fire (viral/trending), alert (larangan/awas), clock (waktu/cepat), chat (obrolan/pendapat), " +
         "rocket (naik/sukses), counter (angka/statistik), slide (lainnya).",
-        `Topik/niche: ${topik}`, log);
+        material, log);
       const m = raw.match(/\{[\s\S]*\}/);
       if (!m) throw new Error("mode AI: LLM tidak membalas JSON — coba topik berbeda");
       let j: { judul?: string; bullets?: unknown; cta?: string };
