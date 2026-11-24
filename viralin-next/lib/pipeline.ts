@@ -10,6 +10,21 @@ import { ytdlpFetch, ytdlpRun } from "./mediakit";
 const PY = process.env.PYTHON || "python3";
 const DEPS = "/home/z/my-project/.deps";
 const YTDLP = path.join(DEPS, "bin", "yt-dlp");
+
+/** Opsi storage: upload file hasil ke Google Drive (butuh VL_GDRIVE_* di deploy/env). */
+async function simpanKeDrive(job: Job, dir: string, log: (l: string) => void): Promise<void> {
+  if ((job.inputs?.simpanDrive || "tidak") !== "ya" || !job.files?.length) return;
+  const { gdriveUpload } = await import("./storage-drive");
+  for (const f of job.files) {
+    log(`[drive] mengunggah ${f.file} ke Google Drive…`);
+    try {
+      f.link = await gdriveUpload(path.join(dir, f.file), f.file, log);
+      log(`[drive] ✓ ${f.file} → ${f.link}`);
+    } catch (e) {
+      throw new Error(`upload Google Drive gagal (${f.file}): ${(e as Error).message}`);
+    }
+  }
+}
 const WORKER = path.join(process.cwd(), "worker", "transcribe.py");
 const FONTS_DIR = path.join(process.cwd(), "assets", "caption-fonts");
 const WHISPER_MODEL = process.env.VL_WHISPER_MODEL || "small";
@@ -260,6 +275,7 @@ export async function runJob(job: Job): Promise<void> {
       setStage(job, "proses", "done");
       curStage = "hasil";
       setStage(job, "hasil", "run");
+      await simpanKeDrive(job, dir, (l: string) => pushLog(job, l));
       job.status = "done";
       setStage(job, "hasil", "done");
       pushLog(job, "✅ selesai", true);
@@ -493,6 +509,7 @@ export async function runJob(job: Job): Promise<void> {
     }
     setStage(job, "render", "done");
 
+    await simpanKeDrive(job, dir, (l: string) => pushLog(job, l));
     job.status = "done";
     await persist(job);
   } catch (e) {

@@ -59,17 +59,15 @@ export default function JobPanel({ job }: { job: Job }) {
       {job.files && job.files.length > 0 && (
         <div className="files">
           {job.files.map((f) => (
-            <a
-              className="frow"
-              key={f.file}
-              href={`/api/jobs/${job.id}/media/${f.file}`}
-              download={f.file}
-            >
+            <div className="frow" key={f.file}>
               <span>{FILE_ICO[f.kind] || "📄"}</span>
               <span className="fhandle">{f.file}</span>
               <span className="flabel">{f.label}</span>
-              <span className="fdown">⬇️</span>
-            </a>
+              <a className="fdown" href={`/api/jobs/${job.id}/media/${f.file}`} download={f.file} title="Download">⬇️</a>
+              {f.link && (
+                <a className="fdrive" href={f.link} target="_blank" rel="noreferrer" title="Buka di Google Drive">☁️ Drive</a>
+              )}
+            </div>
           ))}
         </div>
       )}

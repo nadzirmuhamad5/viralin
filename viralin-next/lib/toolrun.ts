@@ -263,9 +263,31 @@ export async function runTool(job: Job, dir: string, log: Log): Promise<void> {
   }
 
   async function motionStudio(_d: string, log: Log): Promise<void> {
-    const judul = (inputs.judul || "VIRALIN").toUpperCase().slice(0, 40);
-    const items = (inputs.bullets || "").split(/\n+/).map((s) => s.trim()).filter(Boolean).slice(0, 5);
-    const cta = (inputs.cta || "").slice(0, 40);
+    let judul: string; let items: string[]; let cta: string;
+    if ((inputs.mode || "manual") === "ai") {
+      // mode otomatis: z-ai (GLM) menyusun hook/bullet/CTA dari satu topik
+      const topik = (inputs.topik || "").trim();
+      if (!topik) throw new Error("Mode AI: isi Topik dulu (mis. \"tips hemat belanja mahasiswa\")");
+      log("[ai] mode otomatis — z-ai (GLM) menyusun hook/bullet/CTA…");
+      const raw = await mk.zaiChat(
+        "Kamu penulis konten short-video viral Indonesia. Susun struktur Motion Studio dari topik. " +
+        "Balas HANYA JSON valid tanpa penjelasan: {\"judul\":\"HOOK KAPITAL maks 40 karakter\", " +
+        "\"bullets\":[\"3-5 poin pendek maks 60 karakter, gaya santai-tajam\"], \"cta\":\"CTA maks 30 karakter\"}.",
+        `Topik/niche: ${topik}`, log);
+      const m = raw.match(/\{[\s\S]*\}/);
+      if (!m) throw new Error("mode AI: LLM tidak membalas JSON — coba topik berbeda");
+      let j: { judul?: string; bullets?: unknown; cta?: string };
+      try { j = JSON.parse(m[0]); } catch { throw new Error("mode AI: JSON dari LLM rusak — jalankan ulang"); }
+      judul = String(j.judul || "VIRALIN").toUpperCase().slice(0, 40);
+      items = Array.isArray(j.bullets) ? j.bullets.map((s) => String(s).trim()).filter(Boolean).slice(0, 5) : [];
+      if (!items.length) throw new Error("mode AI: bullets kosong dari LLM — jalankan ulang");
+      cta = String(j.cta || "FOLLOW SEKARANG").slice(0, 40);
+      log(`[ai] hasil: judul "${judul}" · ${items.length} bullet · CTA "${cta}"`);
+    } else {
+      judul = (inputs.judul || "VIRALIN").toUpperCase().slice(0, 40);
+      items = (inputs.bullets || "").split(/\n+/).map((s) => s.trim()).filter(Boolean).slice(0, 5);
+      cta = (inputs.cta || "").slice(0, 40);
+    }
     const warna = (["green", "blue", "orange", "pink"].includes(inputs.warna || "") ? inputs.warna : "green") as WarnaId;
     const sfxOn = (inputs.sfx || "ya") !== "tidak";
     const props: MotionStudioProps = { judul, bullets: items.join("\n"), cta, warna, sfx: sfxOn };

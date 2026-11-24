@@ -130,7 +130,15 @@ export const TOOLS: ToolDef[] = [
     id: "motion-studio", name: "Motion Studio", icon: "🎬", group: "Editor & Komposisi", badge: "NEW", live: true,
     desc: "Motion grafik engine Remotion: preview live di browser, hook animasi → bullet reveal → CTA pulse, SFX sinkron, render MP4 30fps.",
     fields: [
-      { key: "judul", label: "Judul / hook", type: "text", required: true, placeholder: "RAHASIA KONTEN VIRAL" },
+      { key: "mode", label: "Mode", type: "select", default: "manual",
+        options: [
+          { value: "manual", label: "Manual — aku isi sendiri" },
+          { value: "ai", label: "Otomatis AI — z-ai susun hook/bullet/CTA dari topik" },
+        ], hint: "Mode AI pakai LLM z-ai (GLM) — gratis" },
+      { key: "topik", label: "Topik (dipakai mode AI)", type: "text",
+        placeholder: "mis. tips hemat belanja mahasiswa" },
+      { key: "judul", label: "Judul / hook", type: "text",
+        placeholder: "RAHASIA KONTEN VIRAL", hint: "mode Manual — di mode AI dibuatkan z-ai" },
       { key: "bullets", label: "Bullet (1 per baris, maks 5)", type: "textarea",
         placeholder: "Hook 3 detik pertama\nGaya bicara santai\nCTA jelas di akhir" },
       { key: "cta", label: "CTA penutup", type: "text", placeholder: "FOLLOW SEKARANG" },
@@ -144,6 +152,11 @@ export const TOOLS: ToolDef[] = [
           { value: "ya", label: "Dengan SFX (whoosh + pop + ding)" },
           { value: "tidak", label: "Tanpa audio" },
         ] },
+      { key: "simpanDrive", label: "Storage hasil", type: "select", default: "tidak",
+        options: [
+          { value: "tidak", label: "Simpan di server (download dari sini)" },
+          { value: "ya", label: "Upload ke Google Drive juga (butuh VL_GDRIVE_* di deploy/env)" },
+        ], hint: "Link share Drive muncul di panel hasil job" },
     ],
   },
   {
