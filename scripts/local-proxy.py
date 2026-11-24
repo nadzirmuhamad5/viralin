@@ -41,6 +41,7 @@ async def handle(cr: asyncio.StreamReader, cw: asyncio.StreamWriter) -> None:
     try:
         if line.startswith("CONNECT"):
             host, _, port = line.split()[1].partition(":")
+            print(f"[local-proxy] CONNECT → {host}", flush=True)
             rr, rw = await asyncio.open_connection(host, int(port or 443))
             cw.write(b"HTTP/1.1 200 Connection established\r\n\r\n")
             await cw.drain()
