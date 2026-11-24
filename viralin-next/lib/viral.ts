@@ -38,12 +38,17 @@ export const viralDefaultProps = (): ViralKontenProps => ({
 const kata = (t: string): string[] =>
   (t.toLowerCase().replace(/[^\p{L}\p{N}\s]/gu, " ").split(/\s+/).filter(Boolean));
 
-const normW = (w: string): string => w.toLowerCase().replace(/[^\p{L}\p{N}]/gu, "");
-
 /** Align batas scene ke timeline whisper: tiap segmen teks dikonsumsi proporsional
  *  jumlah kata, lalu di-SNAP ke kata persis yang sama di hasil whisper (±6 kata)
- *  — TTS & whisper mengucapkan teks yang sama, jadi batas scene akurat per poin. */
-export function alignScenes(texts: string[], words: { word: string; end: number }[], totalDur: number): { start: number; end: number }[] {
+ *  — estimasi proporsional di-SNAP ke AKHIR SEGMENT whisper (akhir kalimat; tiap
+ *  segmen teks = 1 kalimat) terdekat — jauh lebih stabil daripada snap kata,
+ *  karena kata yang sama bisa muncul 2× di naskah dan menyentak boundary. */
+export function alignScenes(
+  texts: string[],
+  words: { word: string; end: number }[],
+  totalDur: number,
+  whisperSegEnds: number[] = [], // end time tiap segment whisper (akhir kalimat)
+): { start: number; end: number }[] {
   const segs = texts.map(kata).filter((k) => k.length > 0);
   const counts = segs.map((k) => k.length);
   const totalKata = counts.reduce((a, b) => a + b, 0) || 1;
@@ -61,13 +66,15 @@ export function alignScenes(texts: string[], words: { word: string; end: number 
   let cum = 0;
   for (let i = 0; i < counts.length; i++) {
     cum += counts[i];
-    const lastKata = normW(segs[i][counts[i] - 1]);
-    let idx = Math.min(W - 1, Math.max(0, Math.round((cum / totalKata) * W) - 1));
-    // snap: cari kata whisper yang persis sama di sekitar idx
-    for (let j = Math.max(0, idx - 6); j <= Math.min(W - 1, idx + 6); j++) {
-      if (normW(words[j].word) === lastKata) { idx = j; break; }
+    // estimasi waktu dari distribusi kata → snap ke akhir kalimat whisper terdekat
+    const idx = Math.min(W - 1, Math.max(0, Math.round((cum / totalKata) * W) - 1));
+    let end = words[idx].end;
+    let best = Infinity;
+    for (const se of whisperSegEnds) {
+      const d = Math.abs(se - end);
+      if (d < best && d <= 2.5) { best = d; end = se; }
     }
-    ends.push(words[idx].end);
+    ends.push(end);
   }
   // clamp monotonic + jeda minimal antar scene
   const out: { start: number; end: number }[] = [];

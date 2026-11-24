@@ -6,12 +6,15 @@
  *     flash-transition 3 frame, chip counter "1/3", karaoke caption word-by-word
  *     (kata aktif kuning + pop) dari word-timing whisper.
  *  3. CTA: pill punch + panah bob + confetti ring (pol Cta MotionStudio).
+ *  v2.1 "lebih hidup": SFX whoosh/pop/ding (track audio komposisi, di-mix dgn TTS
+ *  saat mux), partikel naik global, kinetic hook per-kata, word-pulse (bg berdenyut
+ *  mengikuti ritme suara), emoji chip per poin (dari kata kunci), shine sweep CTA.
  *  Progress bar atas — psikologi "tinggal dikit" → watch-till-end.
  *  Dipakai bersama: renderMedia server (img URL absolut) & Player browser (relatif).
- *  Audio TTS di-mux ffmpeg pasca-render — komposisi visual-only (sync pasti). */
+ *  TTS di-mux ffmpeg pasca-render (amix dgn track SFX komposisi). */
 import React from "react";
 import {
-  AbsoluteFill, Img, Sequence, interpolate, spring, staticFile,
+  AbsoluteFill, Audio, Img, Sequence, interpolate, spring, staticFile,
   useCurrentFrame, useVideoConfig, continueRender, delayRender,
 } from "remotion";
 import type { ViralKontenProps, ViralScene } from "../lib/viral";
@@ -29,9 +32,45 @@ if (typeof document !== "undefined" && !document.fonts.check('20px "Anton VB"'))
 const CAP_FONT = '"Anton VB", "Anton", Impact, sans-serif';
 const rnd = (i: number) => { const x = Math.sin(i * 127.1 + 311.7) * 43758.5453; return x - Math.floor(x); };
 
+/** Emoji per scene dari kata kunci isi teks — aksen visual murah tapi nambah "hidup". */
+const emojiFor = (t: string): string => {
+  const s = t.toLowerCase();
+  if (/(uang|harga|rp\b|rupiah|murah|gratis|hemat|promo|diskon|bayar|gaji|untung)/.test(s)) return "💰";
+  if (/(kopi|makan|enak|nagih|lezat|kuliner|buah|masak|susu|gula|minum|rasa|pahit|manis|es\b)/.test(s)) return "🔥";
+  if (/(pantai|tempat|wisata|travel|datang|kunjung|liburan|trip|jalan|kota)/.test(s)) return "📍";
+  if (/(fakta|tahukah|kenapa|mengapa|sebab|alasan|rahasia|ternyata|jarang)/.test(s)) return "🤯";
+  if (/(sehat|tidur|olahraga|badan|kesehatan|stres|stress|kebiasaan)/.test(s)) return "💪";
+  if (/(follow|ikuti|komen|share|simpan|bagikan)/.test(s)) return "👉";
+  return "✨";
+};
+
+/* ═══════════════ PARTIKEL naik pelan (layer global, halus) ═══════════════ */
+
+const Particles: React.FC<{ accent: string }> = ({ accent }) => {
+  const frame = useCurrentFrame();
+  return (
+    <AbsoluteFill style={{ pointerEvents: "none" }}>
+      {[...Array(12)].map((_, k) => {
+        const x = rnd(k) * 540;
+        const base = rnd(k + 50) * 960;
+        const speed = 1.0 + rnd(k + 130) * 1.8;
+        const y = ((base - frame * speed) % 960 + 960) % 960;
+        return (
+          <div key={k} style={{
+            position: "absolute", left: x + Math.sin(frame / 44 + k) * 12, top: y,
+            width: 3 + rnd(k + 90) * 5, height: 3 + rnd(k + 90) * 5, borderRadius: 99,
+            background: accent, opacity: 0.08 + 0.12 * Math.abs(Math.sin(frame / 10 + k)),
+          }} />
+        );
+      })}
+    </AbsoluteFill>
+  );
+};
+
 /* ═══════════════ LATAR: Ken Burns yang tidak pernah berhenti ═══════════════ */
 
-const KenBurns: React.FC<{ img: string; durF: number; seed: number; punch?: boolean }> = ({ img, durF, seed, punch }) => {
+const KenBurns: React.FC<{ img: string; durF: number; seed: number; punch?: boolean; bump?: number }> =
+  ({ img, durF, seed, punch, bump = 0 }) => {
   const frame = useCurrentFrame();
   const zin = seed % 2 === 0; // alternating zoom in/out — arah beda tiap scene
   // punch: zoom-punch cepat di hook (1.3 → 1.0 dalam 10 frame, easing keluar)
@@ -44,7 +83,7 @@ const KenBurns: React.FC<{ img: string; durF: number; seed: number; punch?: bool
       {img ? (
         <Img src={img.startsWith("http") ? img : staticFile(img)} style={{
           width: "100%", height: "100%", objectFit: "cover",
-          transform: `scale(${drift * punchS}) translate(${panX}px, ${panY}px)`,
+          transform: `scale(${drift * punchS * (1 + bump)}) translate(${panX}px, ${panY}px)`,
         }} />
       ) : (
         <AbsoluteFill style={{ background: `linear-gradient(160deg, #0a0f0a 0%, #123524 ${40 + rnd(seed) * 30}%, #050505 100%)` }} />
@@ -86,7 +125,19 @@ const HookScene: React.FC<{ sc: ViralScene; durF: number; highlight: string }> =
           fontFamily: CAP_FONT, fontSize: size, lineHeight: 1.12, textAlign: "center", color: "#fff",
           textTransform: "uppercase", WebkitTextStroke: "2px #000",
           textShadow: "0 6px 30px rgba(0,0,0,.7), 0 0 18px rgba(0,0,0,.5)",
-        }}>{sc.text}</div>
+        }}>
+          {/* kinetic per-kata — tiap kata punch-in berurutan (bukan blok kaku) */}
+          {sc.text.split(/\s+/).map((w, i) => {
+            const ws = spring({ frame: frame - i * 2, fps, config: { damping: 12, stiffness: 180, mass: 0.4 } });
+            return (
+              <span key={i} style={{
+                display: "inline-block", marginRight: size * 0.22,
+                transform: `translateY(${(1 - ws) * 26}px) scale(${0.5 + 0.5 * ws}) rotate(${(1 - ws) * (i % 2 ? 6 : -6)}deg)`,
+                opacity: Math.min(ws * 2, 1),
+              }}>{w}</span>
+            );
+          })}
+        </div>
         <div style={{ height: 7, width: lineW, borderRadius: 4, background: highlight }} />
       </div>
     </AbsoluteFill>
@@ -139,11 +190,25 @@ const Karaoke: React.FC<{ sc: ViralScene; words: ViralKontenProps["words"]; high
 const PointScene: React.FC<{ sc: ViralScene; idx: number; total: number; durF: number; words: ViralKontenProps["words"]; highlight: string }> =
   ({ sc, idx, total, durF, words, highlight }) => {
     const frame = useCurrentFrame();
-    const chipS = spring({ frame: frame - 2, fps: 30, config: { damping: 12, stiffness: 180, mass: 0.45 } });
+    const { fps } = useVideoConfig();
+    const chipS = spring({ frame: frame - 2, fps, config: { damping: 12, stiffness: 180, mass: 0.45 } });
     const flash = Math.max(0, 0.55 * (1 - frame / 3)); // flash-putih cepat saat ganti scene
+    // word-pulse: bg berdenyut halus tiap kata baru diucapkan (ritme suara)
+    const t = sc.start + frame / fps;
+    const inScene = words.filter((w) => w.e > sc.start + 0.01 && w.s < sc.end - 0.01);
+    let act = -1;
+    for (let i = 0; i < inScene.length; i++) {
+      if (t >= inScene[i].s && t < inScene[i].e) { act = i; break; }
+      if (inScene[i].e <= t) act = i;
+    }
+    const actStartF = act >= 0 ? Math.max(0, Math.round((inScene[act].s - sc.start) * fps)) : 0;
+    const bump = 0.026 * Math.max(0, 1 - (frame - actStartF) / 7); // denyut cepat lalu meluruh
+    // emoji chip kanan-atas — muncul dengan bounce + bob pelan
+    const emo = emojiFor(sc.text);
+    const emoS = spring({ frame: frame - 6, fps, config: { damping: 9, stiffness: 190, mass: 0.45 } });
     return (
       <AbsoluteFill>
-        <KenBurns img={sc.img} durF={durF} seed={idx + 1} />
+        <KenBurns img={sc.img} durF={durF} seed={idx + 1} bump={bump} />
         <Vignette strength={0.5} />
         <div style={{
           position: "absolute", top: 34, left: 24, display: "flex", alignItems: "center", gap: 10,
@@ -154,6 +219,11 @@ const PointScene: React.FC<{ sc: ViralScene; idx: number; total: number; durF: n
             borderRadius: 999, padding: "5px 14px", fontSize: 17, fontWeight: 900, letterSpacing: 1,
           }}>{idx + 1}/{total}</div>
         </div>
+        <div style={{
+          position: "absolute", top: 26, right: 22, fontSize: 52, lineHeight: 1,
+          transform: `scale(${Math.max(emoS, 0.001)}) rotate(${Math.sin(frame / 9) * 8}deg)`,
+          filter: `drop-shadow(0 0 ${14 + Math.sin(frame / 5) * 6}px rgba(0,0,0,.5))`,
+        }}>{emo}</div>
         <Karaoke sc={sc} words={words} highlight={highlight} />
         <AbsoluteFill style={{ background: "#fff", opacity: flash, pointerEvents: "none" }} />
       </AbsoluteFill>
@@ -169,6 +239,7 @@ const CtaScene: React.FC<{ sc: ViralScene; durF: number; highlight: string }> = 
   const pulse = 1 + Math.sin(frame / 4) * 0.035;
   const bob = Math.sin(frame / 4) * 7;
   const size = sc.text.length > 22 ? 32 : sc.text.length > 14 ? 38 : 44;
+  const shine = ((frame % 42) / 42) * 520 - 220; // sweep cahaya melintas pill
   const t0 = ((frame - 4) % 28 + 28) % 28; // confetti meledak berulang
   const conf = [...Array(18)].map((_, k) => {
     const ang = (k / 18) * Math.PI * 2 + rnd(k) * 0.6;
@@ -194,7 +265,14 @@ const CtaScene: React.FC<{ sc: ViralScene; durF: number; highlight: string }> = 
             padding: "20px 30px", fontFamily: CAP_FONT, fontSize: size, color: "#0b0b0b",
             letterSpacing: 1, textTransform: "uppercase", whiteSpace: "pre-wrap", textAlign: "center",
             boxShadow: `0 0 40px ${highlight}88`,
-          }}>{sc.text || "FOLLOW SEKARANG"}</div>
+          }}>
+            {sc.text || "FOLLOW SEKARANG"}
+            <div style={{
+              position: "absolute", top: 0, bottom: 0, width: 64, left: shine,
+              background: "linear-gradient(100deg, transparent, rgba(255,255,255,.55), transparent)",
+              transform: "skewX(-18deg)",
+            }} />
+          </div>
         </div>
         <span style={{ fontSize: 42, color: highlight, transform: `translateX(${bob}px)`, textShadow: `0 0 ${26}px ${highlight}` }}>→</span>
       </div>
@@ -224,6 +302,19 @@ export const ViralKonten: React.FC<ViralKontenProps> = (props) => {
 
   return (
     <AbsoluteFill style={{ backgroundColor: "#050505", width, height, fontFamily: '"Montserrat XB", sans-serif' }}>
+      <Particles accent={highlight} />
+
+      {/* SFX: whoosh di hook, pop tiap ganti scene, ding saat CTA — track audio
+          komposisi (TTS voiceover tetap di-mux ffmpeg agar sync & bisa fade) */}
+      <Sequence from={0}>
+        <Audio src={staticFile("sfx/whoosh.wav")} volume={0.6} />
+      </Sequence>
+      {scenes.slice(1).map((s, i) => (
+        <Sequence key={`sfx-${i}`} from={Math.max(0, Math.round(s.start * fps))}>
+          <Audio src={staticFile(s.kind === "cta" ? "sfx/ding.wav" : "sfx/pop.wav")} volume={s.kind === "cta" ? 0.55 : 0.45} />
+        </Sequence>
+      ))}
+
       {/* Sequence → useCurrentFrame() di dalam scene = frame LOKAL scene
           (punch/flash/chip & timing karaoke akurat per scene, bukan global) */}
       <Sequence key={`sc-${cur}`} from={startF} durationInFrames={durF} name={sc.kind}>

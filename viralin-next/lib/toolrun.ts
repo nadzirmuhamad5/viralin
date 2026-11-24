@@ -458,7 +458,7 @@ export async function runTool(job: Job, dir: string, log: Log): Promise<void> {
     const info = await mk.transcribe(wav, dir, log);
     const words: Word[] = info.segments.flatMap((s) => s.words || []);
     const dur = info.duration + 0.8;
-    const bounds = alignScenes(texts, words, dur);
+    const bounds = alignScenes(texts, words, dur, info.segments.map((s) => s.end));
     // 3. Latar per scene: hook + tiap poin gambar sendiri (CTA pakai ulang hook) — visual berganti terus
     const pubDir = path.join(process.cwd(), "public", "konten", job.id);
     await fs.mkdir(pubDir, { recursive: true });
@@ -514,23 +514,26 @@ export async function runTool(job: Job, dir: string, log: Log): Promise<void> {
     }
     const { selectComposition, renderMedia } = await import("@remotion/renderer");
     const comp = await selectComposition({ serveUrl: bundleCache, id: "ViralKonten", inputProps: props });
-    const silent = path.join(dir, "viral-silent.mp4");
+    const visual = path.join(dir, "viral-visual.mp4"); // video + track SFX dari komposisi
     log(`[remotion] render ${Math.round((comp.durationInFrames / comp.fps) * 10) / 10}s @${comp.fps}fps…`);
     let last = 0;
     await renderMedia({
-      composition: comp, serveUrl: bundleCache, codec: "h264", outputLocation: silent,
+      composition: comp, serveUrl: bundleCache, codec: "h264", outputLocation: visual,
       inputProps: props,
       onProgress: ({ progress }) => {
         const pct = Math.floor(progress * 100);
         if (pct >= last + 25) { last = Math.min(pct - (pct % 25), 75); log(`[remotion] render ${last + 25}%`); }
       },
     });
-    // 5. Mux voiceover + fade — komposisi visual-only (sync pasti, render cepat)
+    // 5. Mux: voiceover (fade-out) + track SFX komposisi — amix normalize=0 supaya
+    //    level VO tidak terbagi 2; alimiter jaga peak saat whoosh tumpang suara
     const out = path.join(dir, "konten-viral.mp4");
-    log("[mux] suara + video…");
-    const m = await run(["ffmpeg", "-y", "-hide_banner", "-i", silent, "-i", speech, "-t", String(dur),
-      "-af", "afade=t=out:st=" + Math.max(dur - 0.8, 0) + ":d=0.8",
-      "-c:v", "copy", "-c:a", "aac", "-b:a", "160k", "-shortest", "-movflags", "+faststart", out]);
+    log("[mux] suara + sfx + video…");
+    const fc = "[1:a]afade=t=out:st=" + Math.max(dur - 0.8, 0) + ":d=0.8[vo];" +
+      "[0:a]volume=0.9[sfx];[sfx][vo]amix=inputs=2:duration=first:normalize=0,alimiter=limit=0.95[a]";
+    const m = await run(["ffmpeg", "-y", "-hide_banner", "-i", visual, "-i", speech,
+      "-filter_complex", fc, "-map", "0:v", "-map", "[a]", "-t", String(dur),
+      "-c:v", "copy", "-c:a", "aac", "-b:a", "160k", "-movflags", "+faststart", out]);
     if (m.code !== 0) throw new Error("mux gagal: " + tailErr(m.stderr));
     const st = await fs.stat(out);
     await fs.rm(pubDir, { recursive: true, force: true }).catch(() => {});
