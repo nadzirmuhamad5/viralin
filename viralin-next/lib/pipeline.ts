@@ -29,7 +29,9 @@ const WORKER = path.join(process.cwd(), "worker", "transcribe.py");
 const FONTS_DIR = path.join(process.cwd(), "assets", "caption-fonts");
 const WHISPER_MODEL = process.env.VL_WHISPER_MODEL || "small";
 const WHISPER_LANG = process.env.VL_WHISPER_LANGUAGE || "id"; // produk fokus Indonesia; auto sering salah deteksi TTS
-const MAX_SECONDS = Number(process.env.VL_MAX_SECONDS || 900); // 15 menit
+/** Panjang maksimal SATU BAGIAN analisis — video lebih panjang dipecah otomatis
+ *  (contoh: 1 jam → 3 bagian), momen dicari per bagian satu demi satu. */
+const PART_SECONDS = Number(process.env.VL_PART_SECONDS || 1500); // 25 menit
 const ENV = {
   ...process.env,
   HF_HOME: "/home/z/my-project/.cache/huggingface",
@@ -189,6 +191,41 @@ function pickProposals(segs: Seg[], cuts: number[], dur: number): Proposal[] {
     if (!picked.length && dur > 15) {
       picked.push({ start: 0, end: r2(Math.min(30, dur)), score: 0 });
     }
+  }
+  return picked;
+}
+
+const fmtMenit = (s: number): string => `${Math.floor(s / 60)}m${Math.round(s % 60)}s`;
+
+/** Pecah durasi penuh jadi bagian-bagian ≤ PART_SECONDS lalu pilih momen PER BAGIAN:
+ *  terbaik bagian 1 → bagian 2 → … lalu kandidat kedua tiap bagian (round-robin).
+ *  Menjamin klip menyebar ke seluruh video, bukan numpuk di menit-menit awal. */
+function pickProposalsPerBagian(segs: Seg[], dur: number, log: (l: string) => void): Proposal[] {
+  const parts = Math.max(1, Math.ceil(dur / PART_SECONDS));
+  const perPart: Proposal[][] = [];
+  for (let k = 0; k < parts; k++) {
+    const lo = k * PART_SECONDS;
+    const hi = Math.min((k + 1) * PART_SECONDS, dur);
+    const inPart = segs.filter((s) => s.end > lo + 1 && s.start < hi - 1);
+    // kandidat dari potongan subtitel bagian ini (waktu tetap absolut)
+    const cands = pickProposals(inPart, [], hi - lo)
+      .filter((p) => p.end > lo + 1 && p.start < hi - 1);
+    log(`[bagian ${k + 1}/${parts}] ${fmtMenit(lo)}–${fmtMenit(hi)} — ${inPart.length} baris ucapan, ${cands.length} kandidat momen`);
+    perPart.push(cands);
+  }
+  const picked: Proposal[] = [];
+  for (let round = 0; picked.length < 3; round++) {
+    let added = false;
+    for (let k = 0; k < parts && picked.length < 3; k++) {
+      const c = perPart[k]?.[round];
+      if (!c) continue;
+      if (picked.every((p) => c.end <= p.start + 3 || c.start >= p.end - 3)) {
+        picked.push(c);
+        added = true;
+        log(`[momen] bagian ${k + 1} → ${fmtMenit(c.start)}–${fmtMenit(c.end)} (skor ${c.score})`);
+      }
+    }
+    if (!added) break;
   }
   return picked;
 }
@@ -367,41 +404,55 @@ export async function runJob(job: Job): Promise<void> {
     curStage = "transcribe";
     setStage(job, "transcribe", "run");
     if (!segs.length) {
-      // fallback (video tanpa subtitel): audio-only window 15 menit + whisper
-      const window = Math.min(dur || MAX_SECONDS, MAX_SECONDS);
-      pushLog(job, `[fallback] tanpa subtitel — audio ${Math.round(window / 60)} menit pertama via whisper`, true);
-      await ytdlpFetch(
-        ["-q", "--no-warnings", "-f", "ba[ext=m4a]/ba/b",
-         "--download-sections", `*0-${window}`,
-         "-o", path.join(dir, "sumber-audio.%(ext)s")],
-        job.url, job.inputs?.cookies, (l) => pushLog(job, l),
-      );
-      let audio = "";
-      for (const f of await fs.readdir(dir)) {
-        if (f.startsWith("sumber-audio.")) audio = path.join(dir, f);
+      // fallback (video tanpa subtitel): audio DIPER BAGIAN (≤ PART_SECONDS) + whisper
+      const fullDur = dur || PART_SECONDS;
+      const parts = Math.max(1, Math.ceil(fullDur / PART_SECONDS));
+      if (parts > 1) {
+        pushLog(job, `[bagian] tanpa subtitel — audio diproses per bagian (${parts} × ≤${Math.round(PART_SECONDS / 60)} mnt)`, true);
       }
-      if (!audio) throw new Error("audio sumber tidak ditemukan setelah unduh");
-      const pw = await run([
-        "ffprobe", "-v", "error", "-show_entries", "format=duration",
-        "-of", "json", audio,
-      ]);
-      dur = parseFloat(JSON.parse(pw.stdout).format?.duration || "0") || window;
-      const wav = path.join(dir, "audio.wav");
-      const ax = await run(["ffmpeg", "-y", "-i", audio, "-vn", "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le", wav]);
-      if (ax.code !== 0) throw new Error("ekstrak audio gagal: " + tailErr(ax.stderr));
-      const tr = await run(
-        [PY, WORKER, wav, "--model", WHISPER_MODEL, "--language", WHISPER_LANG, "--threads", "2"],
-        { env: ENV, onLine: (l) => l.startsWith("[whisper]") && pushLog(job, l) }
-      );
-      if (tr.code !== 0) throw new Error("whisper gagal: " + tailErr(tr.stderr));
-      const info = JSON.parse(tr.stdout.trim().split("\n").pop() || "{}") as {
-        language?: string; segments?: Seg[];
-      };
-      segs = info.segments || [];
-      job.lang = info.language;
-      pushLog(job, `[whisper] bahasa=${info.language} · ${segs.length} segmen · ${allWords(segs).length} kata ber-timestamp`, true);
-      await fs.rm(wav, { force: true });
-      await fs.rm(audio, { force: true });
+      for (let k = 0; k < parts; k++) {
+        const lo = k * PART_SECONDS;
+        const hi = Math.min((k + 1) * PART_SECONDS, fullDur);
+        if (lo >= fullDur) break;
+        pushLog(job, `[bagian ${k + 1}/${parts}] unduh audio ${fmtMenit(lo)}–${fmtMenit(hi)} → whisper`, true);
+        const wav = path.join(dir, `audio-${k}.wav`);
+        await ytdlpFetch(
+          ["-q", "--no-warnings", "-f", "ba[ext=m4a]/ba/b",
+           "--download-sections", `*${lo}-${hi}`,
+           "-o", path.join(dir, `audio-${k}.%(ext)s`)],
+          job.url, job.inputs?.cookies, (l) => pushLog(job, l),
+        ).catch(() => { /* URL file langsung tak mendukung sections → fallback ffmpeg di bawah */ });
+        let audio = "";
+        for (const f of await fs.readdir(dir)) {
+          if (f.startsWith(`audio-${k}.`) && !f.endsWith(".part")) audio = path.join(dir, f);
+        }
+        let haveWav = false;
+        if (audio && (await probeDur(audio).catch(() => 0)) > 0) {
+          const ax = await run(["ffmpeg", "-y", "-i", audio, "-vn", "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le", wav]);
+          if (ax.code === 0) haveWav = true;
+        }
+        if (!audio || !haveWav) {
+          // fallback: file http langsung — ffmpeg ekstrak audio per rentang (range request)
+          const fx = await run(["ffmpeg", "-y", "-loglevel", "error", "-ss", String(lo), "-to", String(hi),
+            "-i", job.url, "-vn", "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le", wav]);
+          if (fx.code !== 0) throw new Error(`audio bagian ${k + 1} gagal diunduh: ` + tailErr(fx.stderr));
+        }
+        if (audio && audio !== wav) await fs.rm(audio, { force: true });
+        const tr = await run(
+          [PY, WORKER, wav, "--model", WHISPER_MODEL, "--language", WHISPER_LANG, "--threads", "2"],
+          { env: ENV, onLine: (l) => l.startsWith("[whisper]") && pushLog(job, l) }
+        );
+        if (tr.code !== 0) throw new Error("whisper gagal: " + tailErr(tr.stderr));
+        const info = JSON.parse(tr.stdout.trim().split("\n").pop() || "{}") as {
+          language?: string; segments?: Seg[];
+        };
+        const segsPart = (info.segments || []).map((s) => ({ ...s, start: s.start + lo, end: s.end + lo }));
+        segs.push(...segsPart);
+        if (info.language && !job.lang) job.lang = info.language;
+        pushLog(job, `[whisper][bagian ${k + 1}] ${segsPart.length} segmen · ${allWords(segsPart).length} kata ber-timestamp`, true);
+        await fs.rm(wav, { force: true });
+        await fs.rm(audio, { force: true });
+      }
     } else {
       pushLog(job, "[whisper] analisis dilewati — transkrip penuh sudah dari subtitel (whisper per-segmen di tahap render)");
     }
@@ -412,9 +463,12 @@ export async function runJob(job: Job): Promise<void> {
     curStage = "analyze";
     setStage(job, "analyze", "run");
     // tanpa unduh video penuh → scene detection dilewati; pemilihan murni dari kepadatan ujaran
-    const cuts: number[] = [];
     pushLog(job, "[scene] dilewati — tanpa unduh video penuh (pemilihan dari kepadatan ujaran)");
-    const proposals = pickProposals(segs, cuts, dur);
+    const nParts = Math.max(1, Math.ceil(dur / PART_SECONDS));
+    if (nParts > 1) {
+      pushLog(job, `[bagian] video ${Math.round(dur / 60)} menit — dipecah otomatis jadi ${nParts} bagian (≤${Math.round(PART_SECONDS / 60)} mnt), momen dicari per bagian`, true);
+    }
+    const proposals = pickProposalsPerBagian(segs, dur, (l) => pushLog(job, l));
     if (!proposals.length) throw new Error("tidak ada kandidat klip yang bisa dibuat");
     const first = segs.find((s) => s.text);
     // metadata judul YouTube lebih baik daripada baris transkrip pertama
@@ -422,7 +476,7 @@ export async function runJob(job: Job): Promise<void> {
       job.title = (first?.text || `Klip dari ${job.url}`).slice(0, 60);
     }
     pushLog(job,
-      `[momen] ${proposals.map((p, i) => `#${i + 1} ${p.start}–${p.end}s (skor ${p.score})`).join(" · ")}`,
+      `[momen] ${proposals.length} klip terpilih: ${proposals.map((p) => fmtMenit(p.start) + "–" + fmtMenit(p.end)).join(" · ")}`,
       true);
     setStage(job, "analyze", "done");
 
@@ -447,9 +501,19 @@ export async function runJob(job: Job): Promise<void> {
       );
       let seg = "";
       for (const f of await fs.readdir(dir)) {
-        if (f.startsWith(`seg-${i}.`)) seg = path.join(dir, f);
+        if (f.startsWith(`seg-${i}.`) && !f.endsWith(".part")) seg = path.join(dir, f);
       }
-      if (!seg) throw new Error(`segmen ${i + 1} gagal diunduh`);
+      if (!seg || (await probeDur(seg).catch(() => 0)) <= 0) {
+        // URL file langsung: yt-dlp tak selalu mendukung --download-sections → ffmpeg range
+        seg = path.join(dir, `seg-${i}.mp4`);
+        const fx = await run(["ffmpeg", "-y", "-loglevel", "error", "-ss", String(p.start), "-to", String(p.end),
+          "-i", job.url, "-c", "copy", "-movflags", "+faststart", seg]);
+        if (fx.code !== 0) {
+          const tc = await run(["ffmpeg", "-y", "-loglevel", "error", "-ss", String(p.start), "-to", String(p.end),
+            "-i", job.url, "-c:v", "libx264", "-preset", "veryfast", "-crf", "27", "-c:a", "aac", seg]);
+          if (tc.code !== 0) throw new Error(`segmen ${i + 1} gagal diunduh`);
+        }
+      }
       if (!seg.endsWith(".mp4")) {
         // webm/vp9 → remux ringan ke mp4 (kalau codec tak kompatibel, ffmpeg copy gagal → transcode)
         const mp4 = seg.replace(/\.\w+$/, ".mp4");

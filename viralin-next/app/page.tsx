@@ -158,14 +158,15 @@ export default function Home() {
           </div>
           <div className="askrow">
             <span className="techpill">🎙️ whisper small · id</span>
-            <span className="techpill dim">⚡ maks 3 klip · 15 menit</span>
+            <span className="techpill dim">⚡ maks 3 klip · pecah otomatis per 25 mnt</span>
             <button className="send" onClick={submit} disabled={busy} aria-label="Proses">
               {busy ? "⏳" : "🚀"}
             </button>
           </div>
         </div>
         <p className="hintrow">
-          Batas demo: 15 menit per video · YouTube/TikTok bisa menolak IP data center (bot
+          Video lebih dari 25 menit otomatis dipecah per bagian — AI cari momen di
+          tiap bagian · YouTube/TikTok bisa menolak IP data center (bot
           check) · URL file .mp4 langsung selalu jalan
         </p>
         {err && (

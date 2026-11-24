@@ -86,7 +86,7 @@ export const FAQ: Array<[string, string]> = [
   ],
   [
     "Apa itu sistem kredit?",
-    "Di produk asli, kredit adalah kuota menit video yang diproses tiap bulan. Demo ini tidak memakai kredit — batasnya teknis: 15 menit per video dan maksimal 3 klip per job.",
+    "Di produk asli, kredit adalah kuota menit video yang diproses tiap bulan. Demo ini tidak memakai kredit — maksimal 3 klip per job, dan video di atas 25 menit otomatis dipecah jadi beberapa bagian (≤25 menit) lalu momen dicari di tiap bagian.",
   ],
   [
     "Apa keunggulan dibanding editing manual?",

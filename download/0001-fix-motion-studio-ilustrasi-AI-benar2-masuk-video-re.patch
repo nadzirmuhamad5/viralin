@@ -1,0 +1,106 @@
+From d2dab039b9473d82871e1853a2935c2bbf10875a Mon Sep 17 00:00:00 2001
+From: Z User <z@container>
+Date: Tue, 24 Nov 2026 18:27:51 +0000
+Subject: [PATCH] =?UTF-8?q?fix(motion-studio):=20ilustrasi=20AI=20benar2?=
+ =?UTF-8?q?=20masuk=20video=20render=20=E2=80=94=203=20lapis=20bug:=20(1)?=
+ =?UTF-8?q?=20route=20/api/asset=20flat=20hanya=20match=20path=20persis=20?=
+ =?UTF-8?q?=E2=86=92=20pindah=20ke=20catch-all=20[...p]=20+=20force-dynami?=
+ =?UTF-8?q?c=20(GET=20handler=20tanpa=20API=20dinamis=20ikut=20prerender?=
+ =?UTF-8?q?=20saat=20build,=20404=20ter-cache=20krn=20file=20ilustrasi=20b?=
+ =?UTF-8?q?elum=20ada);=20(2)=20motionImgs()=20membuang=20URL=20absolut=20?=
+ =?UTF-8?q?http=E2=80=A6=20utk=20renderer=20(hanya=20terima=20prefix=20mot?=
+ =?UTF-8?q?ion/)=20=E2=80=94=20render=20selalu=20tanpa=20latar=20tanpa=20e?=
+ =?UTF-8?q?rror;=20(3)=20overlay=20chip=20aa=E2=86=92f2=20+=20opacity=200.?=
+ =?UTF-8?q?55=20membuat=20gambar=20praktis=20tak=20terlihat=20(efektif=203?=
+ =?UTF-8?q?-18%)=20=E2=86=92=2055=E2=86=92d9=20+=200.85.=20Renderer=20kini?=
+ =?UTF-8?q?=20fetch=20via=20/api/asset=20(baca=20disk=20live),=20Player=20?=
+ =?UTF-8?q?tetap=20staticFile;=20E2E=20ed81deeb:=20latar=20sunset=20per-po?=
+ =?UTF-8?q?in=20terlihat=20jelas=20di=20frame=20video?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+---
+ viralin-next/app/api/asset/{ => [...p]}/route.ts | 15 +++++++++++----
+ viralin-next/lib/motion.ts                       |  8 ++++++--
+ viralin-next/remotion/MotionStudio.tsx           |  4 ++--
+ 3 files changed, 19 insertions(+), 8 deletions(-)
+ rename viralin-next/app/api/asset/{ => [...p]}/route.ts (63%)
+
+diff --git a/viralin-next/app/api/asset/route.ts b/viralin-next/app/api/asset/[...p]/route.ts
+similarity index 63%
+rename from viralin-next/app/api/asset/route.ts
+rename to viralin-next/app/api/asset/[...p]/route.ts
+index d76f464..f76b164 100644
+--- a/viralin-next/app/api/asset/route.ts
++++ b/viralin-next/app/api/asset/[...p]/route.ts
+@@ -1,18 +1,25 @@
+ /** Sajikan file statis dari public/ langsung dari disk — dipakai renderer Remotion.
+  *  `next start` TIDAK menyajikan file yang ditambahkan ke public/ SETELAH proses
+  *  start (ilustrasi per-job ditulis belakangan) — route ini membaca disk saat
+- *  request sehingga gambar job mana pun selalu tersedia. */
++ *  request sehingga gambar job mana pun selalu tersedia.
++ *  CATCH-ALL wajib: route datar hanya mencocokkan path persis, bukan sub-path. */
+ import { promises as fs } from "fs";
+ import path from "path";
+ 
++// WAJIB dinamis: kalau tidak, Next mencoba prerender GET handler saat BUILD —
++// saat itu file ilustrasi per-job belum ada → 404 ter-prerender & ter-cache.
++export const dynamic = "force-dynamic";
++
+ const TYPES: Record<string, string> = {
+   ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp",
+   ".wav": "audio/wav", ".mp3": "audio/mpeg", ".ttf": "font/ttf", ".json": "application/json",
+ };
+ 
+-export async function GET(req: Request): Promise<Response> {
+-  const rel = decodeURIComponent(new URL(req.url).pathname)
+-    .replace(/^\/api\/asset\//, "").replace(/\\/g, "/").replace(/^\/+/, "");
++type Ctx = { params: Promise<{ p?: string[] }> };
++
++export async function GET(_req: Request, ctx: Ctx): Promise<Response> {
++  const { p } = await ctx.params;
++  const rel = (p || []).join("/").replace(/\\/g, "/");
+   if (!rel || rel.includes("..")) return new Response("bad path", { status: 400 });
+   try {
+     const buf = await fs.readFile(path.join(process.cwd(), "public", rel));
+diff --git a/viralin-next/lib/motion.ts b/viralin-next/lib/motion.ts
+index 9c79522..6c2ac02 100755
+--- a/viralin-next/lib/motion.ts
++++ b/viralin-next/lib/motion.ts
+@@ -109,10 +109,14 @@ export function motionScenes(p: MotionStudioProps): Array<{ t: string; a: AnimId
+   return bs.map((t, i) => ({ t, a: as[i] }));
+ }
+ 
+-/** Path ilustrasi latar per poin (urut; "" = tanpa gambar). */
++/** Path ilustrasi latar per poin (urut; "" = tanpa gambar).
++ *  Terima path relatif "motion/…" (Player) DAN URL absolut http… (renderer server). */
+ export function motionImgs(p: MotionStudioProps): string[] {
+   const raw = (p.imgs || "").split(/\n+/).map((s) => s.trim());
+-  return motionBullets(p).map((_, i) => (raw[i] || "").startsWith("motion/") ? raw[i] : "");
++  return motionBullets(p).map((_, i) => {
++    const v = raw[i] || "";
++    return v.startsWith("motion/") || v.startsWith("http") ? v : "";
++  });
+ }
+ 
+ /** Durasi total komposisi dalam frame (hook + n poin + CTA) — mengikuti durasi form. */
+diff --git a/viralin-next/remotion/MotionStudio.tsx b/viralin-next/remotion/MotionStudio.tsx
+index e8a319e..8364902 100755
+--- a/viralin-next/remotion/MotionStudio.tsx
++++ b/viralin-next/remotion/MotionStudio.tsx
+@@ -464,9 +464,9 @@ const BulletScene: React.FC<{ t: string; a: AnimId; idx: number; accent: string;
+             <Img src={img.startsWith("http") ? img : staticFile(img)} style={{
+               width: "100%", height: "100%", objectFit: "cover",
+               transform: `scale(${1.12 + 0.08 * Math.min(frame / Math.max(bulletF, 1), 1)})`,
+-              opacity: 0.55 * Math.min(enter * 2, 1) * (1 - exitP),
++              opacity: 0.85 * Math.min(enter * 2, 1) * (1 - exitP),
+             }} />
+-            <AbsoluteFill style={{ background: `linear-gradient(180deg, ${chip}aa 0%, ${chip}f2 100%)` }} />
++            <AbsoluteFill style={{ background: `linear-gradient(180deg, ${chip}55 0%, ${chip}d9 100%)` }} />
+           </AbsoluteFill>
+         )}
+         {a === "alert" && <AbsoluteFill style={{ background: RED, opacity: (0.09 + 0.07 * Math.abs(Math.sin(frame / 2))) * (1 - exitP) }} />}
+-- 
+2.47.3
+
