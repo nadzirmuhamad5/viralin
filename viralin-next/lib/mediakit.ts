@@ -77,6 +77,7 @@ export async function ytdlpRun(
   const ck = await cookieArgs(cookies, log);
   // proxy opsional (residential) — YouTube memblokir stream dari IP data center
   const px = process.env.VL_PROXY ? ["--proxy", process.env.VL_PROXY] : [];
+  if (px.length && process.env.VL_PROXY) await probeProxy(process.env.VL_PROXY, log);
   // PYTHONPATH=.deps → yt-dlp menemukan plugin PO-token (bgutil) + pot server di :4416
   const env = { ...process.env, PYTHONPATH: DEPS };
   const js = await jsRuntimeArgs();
@@ -101,12 +102,38 @@ export async function ytdlpRun(
       log(`[sumber] YouTube menolak akses / format kosong → coba varian client ${i + 2}/${tries.length}…`);
     }
   }
+  const viaProxy = px.length > 0;
   throw new Error(
     "unduh gagal (yt-dlp): " + tailErr(last) +
-    " — YouTube/TikTok sering minta verifikasi dari IP data center. " +
-    "Solusi: pakai URL file .mp4 langsung, ATAU unggah cookies.txt di form (bagian Cookies). " +
-    "Kalau tetap tak ada stream (blokir level IP data center): nyalakan server dengan proxy residential — VL_PROXY=http://user:pass@host:port"
+    (viaProxy
+      ? " — via VL_PROXY tetap ditolak YouTube: exit-IP proxy-mu kemungkinan juga data center. " +
+        "Pakai proxy residential/ISP (cek: curl -x $VL_PROXY https://api.ipify.org). " +
+        "Alternatif paling andal: cookies.txt di form (bagian Cookies)."
+      : " — YouTube memverifikasi IP data center (teruji: 12 varian client ditolak tanpa cookies). " +
+        "Solusi paling andal: cookies.txt di form (bagian Cookies). " +
+        "Tanpa cookies: tulis VL_PROXY=http://user:pass@host:port (harus residential) di deploy/env lalu restart server.")
   );
+}
+
+/** Preflight proxy — sekali per proses: cek proxy bisa dihubungi + catat exit-IP. */
+let proxyProbed: string | null | undefined; // undefined = belum, null = gagal
+async function probeProxy(px: string, log: Log): Promise<void> {
+  if (proxyProbed !== undefined) return;
+  const safe = px.replace(/'/g, "");
+  const r = await run(["bash", "-c",
+    `curl -s --max-time 12 -x '${safe}' https://api.ipify.org 2>&1 || true`]);
+  const ip = (r.stdout || "").trim();
+  if (r.code === 0 && /^\d+\.\d+\.\d+\.\d+$/.test(ip)) {
+    const masked = ip.split(".").slice(0, 2).join(".") + ".x.x";
+    log(`[proxy] VL_PROXY aktif — exit-IP ${masked}`);
+    proxyProbed = ip;
+  } else {
+    proxyProbed = null;
+    throw new Error(
+      `VL_PROXY tidak bisa dihubungi (${px.replace(/:[^:@/]*@/, ":***@")}) — cek host/port/kredensial. ` +
+      "Uji manual: curl -x $VL_PROXY https://api.ipify.org"
+    );
+  }
 }
 
 /** Wrapper kompatibel: hanya butuh label client. */
