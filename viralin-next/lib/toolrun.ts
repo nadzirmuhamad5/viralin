@@ -263,26 +263,39 @@ export async function runTool(job: Job, dir: string, log: Log): Promise<void> {
   }
 
   async function motionStudio(_d: string, log: Log): Promise<void> {
-    let judul: string; let items: string[]; let cta: string;
+    let judul: string; let items: string[]; let cta: string; let anims: string[] = [];
     if ((inputs.mode || "manual") === "ai") {
-      // mode otomatis: LLM (Coarena/z-ai) menyusun hook/bullet/CTA dari satu topik
+      // mode otomatis: LLM (Coarena/z-ai) menyusun hook/bullet/CTA + memilih anim per poin
       const topik = (inputs.topik || "").trim();
       if (!topik) throw new Error("Mode AI: isi Topik dulu (mis. \"tips hemat belanja mahasiswa\")");
       log("[ai] mode otomatis — LLM menyusun hook/bullet/CTA…");
       const raw = await mk.llmChat(
         "Kamu penulis konten short-video viral Indonesia. Susun struktur Motion Studio dari topik. " +
         "Balas HANYA JSON valid tanpa penjelasan: {\"judul\":\"HOOK KAPITAL maks 40 karakter\", " +
-        "\"bullets\":[\"3-5 poin pendek maks 60 karakter, gaya santai-tajam\"], \"cta\":\"CTA maks 30 karakter\"}.",
+        "\"bullets\":[{\"t\":\"poin pendek maks 60 karakter\",\"anim\":\"money\"}], \"cta\":\"CTA maks 30 karakter\"}. " +
+        "Untuk TIAP poin pilih anim yang paling cocok dengan isinya, salah satu dari: " +
+        "money (uang/hemat/belanja), phone (HP/aplikasi/sosmed), check (langkah/cara/tips), heart (cinta/suka), " +
+        "fire (viral/trending), alert (larangan/awas), clock (waktu/cepat), chat (obrolan/pendapat), " +
+        "rocket (naik/sukses), counter (angka/statistik), slide (lainnya).",
         `Topik/niche: ${topik}`, log);
       const m = raw.match(/\{[\s\S]*\}/);
       if (!m) throw new Error("mode AI: LLM tidak membalas JSON — coba topik berbeda");
       let j: { judul?: string; bullets?: unknown; cta?: string };
       try { j = JSON.parse(m[0]); } catch { throw new Error("mode AI: JSON dari LLM rusak — jalankan ulang"); }
       judul = String(j.judul || "VIRALIN").toUpperCase().slice(0, 40);
-      items = Array.isArray(j.bullets) ? j.bullets.map((s) => String(s).trim()).filter(Boolean).slice(0, 5) : [];
+      if (Array.isArray(j.bullets)) {
+        // terima bentuk baru {t, anim} DAN bentuk lama string biasa
+        const parsed = (j.bullets as unknown[]).slice(0, 5).map((b) => {
+          if (typeof b === "string") return { t: b.trim(), a: "" };
+          const o = (b || {}) as { t?: unknown; anim?: unknown };
+          return { t: String(o.t ?? "").trim(), a: String(o.anim ?? "").trim() };
+        }).filter((x) => x.t);
+        items = parsed.map((x) => x.t);
+        anims = parsed.map((x) => x.a);
+      } else items = [];
       if (!items.length) throw new Error("mode AI: bullets kosong dari LLM — jalankan ulang");
       cta = String(j.cta || "FOLLOW SEKARANG").slice(0, 40);
-      log(`[ai] hasil: judul "${judul}" · ${items.length} bullet · CTA "${cta}"`);
+      log(`[ai] hasil: judul "${judul}" · ${items.length} bullet · CTA "${cta}" · anim: ${anims.filter(Boolean).join(",") || "auto"}`);
     } else {
       judul = (inputs.judul || "VIRALIN").toUpperCase().slice(0, 40);
       items = (inputs.bullets || "").split(/\n+/).map((s) => s.trim()).filter(Boolean).slice(0, 5);
@@ -290,7 +303,11 @@ export async function runTool(job: Job, dir: string, log: Log): Promise<void> {
     }
     const warna = (["green", "blue", "orange", "pink"].includes(inputs.warna || "") ? inputs.warna : "green") as WarnaId;
     const sfxOn = (inputs.sfx || "ya") !== "tidak";
-    const props: MotionStudioProps = { judul, bullets: items.join("\n"), cta, warna, sfx: sfxOn };
+    const animsLine = anims.filter(Boolean).length === items.length ? anims.join("\n") : "";
+    const props: MotionStudioProps = {
+      judul, bullets: items.join("\n"), cta, warna, sfx: sfxOn,
+      ...(animsLine ? { anims: animsLine } : {}),
+    };
     log(`[remotion] hook "${judul}" · ${items.length} bullet · CTA "${cta}" · tema ${warna}${sfxOn ? " +sfx" : ""}`);
     // pastikan font tersedia di public/ (recycle bisa menghapusnya — copy ulang)
     const fontDst = path.join(process.cwd(), "public", "fonts", "Montserrat-ExtraBold.ttf");
