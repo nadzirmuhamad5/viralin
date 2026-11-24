@@ -1,0 +1,319 @@
+From 5ceb70289cdb781eff65a2ce6127f56cfd658b10 Mon Sep 17 00:00:00 2001
+From: Z User <z@container>
+Date: Tue, 24 Nov 2026 19:49:39 +0000
+Subject: [PATCH] =?UTF-8?q?feat(konten-tempel):=20v2.1=20komposisi=20makin?=
+ =?UTF-8?q?=20hidup=20=E2=80=94=20SFX=20audio=20+=20elemen=20Motion-Studio?=
+ =?UTF-8?q?=20di=20ViralKonten:=20(1)=20track=20SFX=20di=20komposisi=20?=
+ =?UTF-8?q?=E2=80=94=20whoosh=20di=20hook,=20pop=20tiap=20ganti=20scene,?=
+ =?UTF-8?q?=20ding=20saat=20CTA=20(staticFile=20public/sfx,=20pola=20Motio?=
+ =?UTF-8?q?nStudio),=20di-mix=20dgn=20voiceover=20saat=20mux=20via=20amix?=
+ =?UTF-8?q?=20normalize=3D0=20+=20alimiter=20(level=20VO=20tetap=20dominan?=
+ =?UTF-8?q?,=20pop=20terukur=20-8.3dB=20max=20di=20hasil=20akhir);=20(2)?=
+ =?UTF-8?q?=20kinetic=20hook=20per-kata=20=E2=80=94=20tiap=20kata=20punch-?=
+ =?UTF-8?q?in=20stagger=20dgn=20rotate,=20bukan=20blok=20kaku;=20(3)=20wor?=
+ =?UTF-8?q?d-pulse=20=E2=80=94=20bg=20berdenyut=202.6%=20tiap=20kata=20bar?=
+ =?UTF-8?q?u=20diucapkan=20(mengikuti=20ritme=20whisper),=20meluruh=207=20?=
+ =?UTF-8?q?frame;=20(4)=20emoji=20chip=20per=20poin=20dari=20kata=20kunci?=
+ =?UTF-8?q?=20(=F0=9F=92=B0=F0=9F=94=A5=F0=9F=93=8D=F0=9F=A4=AF?=
+ =?UTF-8?q?=F0=9F=92=AA=F0=9F=91=89=E2=9C=A8)=20bounce=20kanan-atas;=20(5)?=
+ =?UTF-8?q?=20partikel=20naik=20global=20halus=20+=20shine=20sweep=20di=20?=
+ =?UTF-8?q?pill=20CTA;=20FIX=20alignScenes:=20snap=20ke=20AKHIR=20SEGMENT?=
+ =?UTF-8?q?=20whisper=20(akhir=20kalimat,=20=C2=B12.5s=20dari=20estimasi?=
+ =?UTF-8?q?=20proporsional)=20menggantikan=20snap=20kata=20=E2=80=94=20kat?=
+ =?UTF-8?q?a=20sama=20yang=20muncul=202x=20di=20naskah=20(mis.=20'rasa'=20?=
+ =?UTF-8?q?di=202=20poin)=20sempat=20menyentak=20boundary=20CTA=201.9s=20l?=
+ =?UTF-8?q?ebih=20awal;=20kini=20pop=20scene=20tepat=20di=20jeda=20suara?=
+ =?UTF-8?q?=20(2.27/7.60/12.33s),=20ding=200.6s=20sebelum=20kalimat=20CTA;?=
+ =?UTF-8?q?=20E2E=20541f10ab=2022.4s:=20kinetic-emoji-karaoke-shine-CTA=20?=
+ =?UTF-8?q?terverifikasi=20per-frame=20+=20level=20audio=20per=20transisi?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+---
+ viralin-next/lib/toolrun.ts           |  19 +++--
+ viralin-next/lib/viral.ts             |  27 ++++---
+ viralin-next/remotion/ViralKonten.tsx | 107 ++++++++++++++++++++++++--
+ 3 files changed, 127 insertions(+), 26 deletions(-)
+
+diff --git a/viralin-next/lib/toolrun.ts b/viralin-next/lib/toolrun.ts
+index 23a7516..3098944 100755
+--- a/viralin-next/lib/toolrun.ts
++++ b/viralin-next/lib/toolrun.ts
+@@ -458,7 +458,7 @@ export async function runTool(job: Job, dir: string, log: Log): Promise<void> {
+     const info = await mk.transcribe(wav, dir, log);
+     const words: Word[] = info.segments.flatMap((s) => s.words || []);
+     const dur = info.duration + 0.8;
+-    const bounds = alignScenes(texts, words, dur);
++    const bounds = alignScenes(texts, words, dur, info.segments.map((s) => s.end));
+     // 3. Latar per scene: hook + tiap poin gambar sendiri (CTA pakai ulang hook) — visual berganti terus
+     const pubDir = path.join(process.cwd(), "public", "konten", job.id);
+     await fs.mkdir(pubDir, { recursive: true });
+@@ -514,23 +514,26 @@ export async function runTool(job: Job, dir: string, log: Log): Promise<void> {
+     }
+     const { selectComposition, renderMedia } = await import("@remotion/renderer");
+     const comp = await selectComposition({ serveUrl: bundleCache, id: "ViralKonten", inputProps: props });
+-    const silent = path.join(dir, "viral-silent.mp4");
++    const visual = path.join(dir, "viral-visual.mp4"); // video + track SFX dari komposisi
+     log(`[remotion] render ${Math.round((comp.durationInFrames / comp.fps) * 10) / 10}s @${comp.fps}fps…`);
+     let last = 0;
+     await renderMedia({
+-      composition: comp, serveUrl: bundleCache, codec: "h264", outputLocation: silent,
++      composition: comp, serveUrl: bundleCache, codec: "h264", outputLocation: visual,
+       inputProps: props,
+       onProgress: ({ progress }) => {
+         const pct = Math.floor(progress * 100);
+         if (pct >= last + 25) { last = Math.min(pct - (pct % 25), 75); log(`[remotion] render ${last + 25}%`); }
+       },
+     });
+-    // 5. Mux voiceover + fade — komposisi visual-only (sync pasti, render cepat)
++    // 5. Mux: voiceover (fade-out) + track SFX komposisi — amix normalize=0 supaya
++    //    level VO tidak terbagi 2; alimiter jaga peak saat whoosh tumpang suara
+     const out = path.join(dir, "konten-viral.mp4");
+-    log("[mux] suara + video…");
+-    const m = await run(["ffmpeg", "-y", "-hide_banner", "-i", silent, "-i", speech, "-t", String(dur),
+-      "-af", "afade=t=out:st=" + Math.max(dur - 0.8, 0) + ":d=0.8",
+-      "-c:v", "copy", "-c:a", "aac", "-b:a", "160k", "-shortest", "-movflags", "+faststart", out]);
++    log("[mux] suara + sfx + video…");
++    const fc = "[1:a]afade=t=out:st=" + Math.max(dur - 0.8, 0) + ":d=0.8[vo];" +
++      "[0:a]volume=0.9[sfx];[sfx][vo]amix=inputs=2:duration=first:normalize=0,alimiter=limit=0.95[a]";
++    const m = await run(["ffmpeg", "-y", "-hide_banner", "-i", visual, "-i", speech,
++      "-filter_complex", fc, "-map", "0:v", "-map", "[a]", "-t", String(dur),
++      "-c:v", "copy", "-c:a", "aac", "-b:a", "160k", "-movflags", "+faststart", out]);
+     if (m.code !== 0) throw new Error("mux gagal: " + tailErr(m.stderr));
+     const st = await fs.stat(out);
+     await fs.rm(pubDir, { recursive: true, force: true }).catch(() => {});
+diff --git a/viralin-next/lib/viral.ts b/viralin-next/lib/viral.ts
+index 2f26a57..113240c 100644
+--- a/viralin-next/lib/viral.ts
++++ b/viralin-next/lib/viral.ts
+@@ -38,12 +38,17 @@ export const viralDefaultProps = (): ViralKontenProps => ({
+ const kata = (t: string): string[] =>
+   (t.toLowerCase().replace(/[^\p{L}\p{N}\s]/gu, " ").split(/\s+/).filter(Boolean));
+ 
+-const normW = (w: string): string => w.toLowerCase().replace(/[^\p{L}\p{N}]/gu, "");
+-
+ /** Align batas scene ke timeline whisper: tiap segmen teks dikonsumsi proporsional
+  *  jumlah kata, lalu di-SNAP ke kata persis yang sama di hasil whisper (±6 kata)
+- *  — TTS & whisper mengucapkan teks yang sama, jadi batas scene akurat per poin. */
+-export function alignScenes(texts: string[], words: { word: string; end: number }[], totalDur: number): { start: number; end: number }[] {
++ *  — estimasi proporsional di-SNAP ke AKHIR SEGMENT whisper (akhir kalimat; tiap
++ *  segmen teks = 1 kalimat) terdekat — jauh lebih stabil daripada snap kata,
++ *  karena kata yang sama bisa muncul 2× di naskah dan menyentak boundary. */
++export function alignScenes(
++  texts: string[],
++  words: { word: string; end: number }[],
++  totalDur: number,
++  whisperSegEnds: number[] = [], // end time tiap segment whisper (akhir kalimat)
++): { start: number; end: number }[] {
+   const segs = texts.map(kata).filter((k) => k.length > 0);
+   const counts = segs.map((k) => k.length);
+   const totalKata = counts.reduce((a, b) => a + b, 0) || 1;
+@@ -61,13 +66,15 @@ export function alignScenes(texts: string[], words: { word: string; end: number
+   let cum = 0;
+   for (let i = 0; i < counts.length; i++) {
+     cum += counts[i];
+-    const lastKata = normW(segs[i][counts[i] - 1]);
+-    let idx = Math.min(W - 1, Math.max(0, Math.round((cum / totalKata) * W) - 1));
+-    // snap: cari kata whisper yang persis sama di sekitar idx
+-    for (let j = Math.max(0, idx - 6); j <= Math.min(W - 1, idx + 6); j++) {
+-      if (normW(words[j].word) === lastKata) { idx = j; break; }
++    // estimasi waktu dari distribusi kata → snap ke akhir kalimat whisper terdekat
++    const idx = Math.min(W - 1, Math.max(0, Math.round((cum / totalKata) * W) - 1));
++    let end = words[idx].end;
++    let best = Infinity;
++    for (const se of whisperSegEnds) {
++      const d = Math.abs(se - end);
++      if (d < best && d <= 2.5) { best = d; end = se; }
+     }
+-    ends.push(words[idx].end);
++    ends.push(end);
+   }
+   // clamp monotonic + jeda minimal antar scene
+   const out: { start: number; end: number }[] = [];
+diff --git a/viralin-next/remotion/ViralKonten.tsx b/viralin-next/remotion/ViralKonten.tsx
+index 6c22eaa..b38f403 100644
+--- a/viralin-next/remotion/ViralKonten.tsx
++++ b/viralin-next/remotion/ViralKonten.tsx
+@@ -6,12 +6,15 @@
+  *     flash-transition 3 frame, chip counter "1/3", karaoke caption word-by-word
+  *     (kata aktif kuning + pop) dari word-timing whisper.
+  *  3. CTA: pill punch + panah bob + confetti ring (pol Cta MotionStudio).
++ *  v2.1 "lebih hidup": SFX whoosh/pop/ding (track audio komposisi, di-mix dgn TTS
++ *  saat mux), partikel naik global, kinetic hook per-kata, word-pulse (bg berdenyut
++ *  mengikuti ritme suara), emoji chip per poin (dari kata kunci), shine sweep CTA.
+  *  Progress bar atas — psikologi "tinggal dikit" → watch-till-end.
+  *  Dipakai bersama: renderMedia server (img URL absolut) & Player browser (relatif).
+- *  Audio TTS di-mux ffmpeg pasca-render — komposisi visual-only (sync pasti). */
++ *  TTS di-mux ffmpeg pasca-render (amix dgn track SFX komposisi). */
+ import React from "react";
+ import {
+-  AbsoluteFill, Img, Sequence, interpolate, spring, staticFile,
++  AbsoluteFill, Audio, Img, Sequence, interpolate, spring, staticFile,
+   useCurrentFrame, useVideoConfig, continueRender, delayRender,
+ } from "remotion";
+ import type { ViralKontenProps, ViralScene } from "../lib/viral";
+@@ -29,9 +32,45 @@ if (typeof document !== "undefined" && !document.fonts.check('20px "Anton VB"'))
+ const CAP_FONT = '"Anton VB", "Anton", Impact, sans-serif';
+ const rnd = (i: number) => { const x = Math.sin(i * 127.1 + 311.7) * 43758.5453; return x - Math.floor(x); };
+ 
++/** Emoji per scene dari kata kunci isi teks — aksen visual murah tapi nambah "hidup". */
++const emojiFor = (t: string): string => {
++  const s = t.toLowerCase();
++  if (/(uang|harga|rp\b|rupiah|murah|gratis|hemat|promo|diskon|bayar|gaji|untung)/.test(s)) return "💰";
++  if (/(kopi|makan|enak|nagih|lezat|kuliner|buah|masak|susu|gula|minum|rasa|pahit|manis|es\b)/.test(s)) return "🔥";
++  if (/(pantai|tempat|wisata|travel|datang|kunjung|liburan|trip|jalan|kota)/.test(s)) return "📍";
++  if (/(fakta|tahukah|kenapa|mengapa|sebab|alasan|rahasia|ternyata|jarang)/.test(s)) return "🤯";
++  if (/(sehat|tidur|olahraga|badan|kesehatan|stres|stress|kebiasaan)/.test(s)) return "💪";
++  if (/(follow|ikuti|komen|share|simpan|bagikan)/.test(s)) return "👉";
++  return "✨";
++};
++
++/* ═══════════════ PARTIKEL naik pelan (layer global, halus) ═══════════════ */
++
++const Particles: React.FC<{ accent: string }> = ({ accent }) => {
++  const frame = useCurrentFrame();
++  return (
++    <AbsoluteFill style={{ pointerEvents: "none" }}>
++      {[...Array(12)].map((_, k) => {
++        const x = rnd(k) * 540;
++        const base = rnd(k + 50) * 960;
++        const speed = 1.0 + rnd(k + 130) * 1.8;
++        const y = ((base - frame * speed) % 960 + 960) % 960;
++        return (
++          <div key={k} style={{
++            position: "absolute", left: x + Math.sin(frame / 44 + k) * 12, top: y,
++            width: 3 + rnd(k + 90) * 5, height: 3 + rnd(k + 90) * 5, borderRadius: 99,
++            background: accent, opacity: 0.08 + 0.12 * Math.abs(Math.sin(frame / 10 + k)),
++          }} />
++        );
++      })}
++    </AbsoluteFill>
++  );
++};
++
+ /* ═══════════════ LATAR: Ken Burns yang tidak pernah berhenti ═══════════════ */
+ 
+-const KenBurns: React.FC<{ img: string; durF: number; seed: number; punch?: boolean }> = ({ img, durF, seed, punch }) => {
++const KenBurns: React.FC<{ img: string; durF: number; seed: number; punch?: boolean; bump?: number }> =
++  ({ img, durF, seed, punch, bump = 0 }) => {
+   const frame = useCurrentFrame();
+   const zin = seed % 2 === 0; // alternating zoom in/out — arah beda tiap scene
+   // punch: zoom-punch cepat di hook (1.3 → 1.0 dalam 10 frame, easing keluar)
+@@ -44,7 +83,7 @@ const KenBurns: React.FC<{ img: string; durF: number; seed: number; punch?: bool
+       {img ? (
+         <Img src={img.startsWith("http") ? img : staticFile(img)} style={{
+           width: "100%", height: "100%", objectFit: "cover",
+-          transform: `scale(${drift * punchS}) translate(${panX}px, ${panY}px)`,
++          transform: `scale(${drift * punchS * (1 + bump)}) translate(${panX}px, ${panY}px)`,
+         }} />
+       ) : (
+         <AbsoluteFill style={{ background: `linear-gradient(160deg, #0a0f0a 0%, #123524 ${40 + rnd(seed) * 30}%, #050505 100%)` }} />
+@@ -86,7 +125,19 @@ const HookScene: React.FC<{ sc: ViralScene; durF: number; highlight: string }> =
+           fontFamily: CAP_FONT, fontSize: size, lineHeight: 1.12, textAlign: "center", color: "#fff",
+           textTransform: "uppercase", WebkitTextStroke: "2px #000",
+           textShadow: "0 6px 30px rgba(0,0,0,.7), 0 0 18px rgba(0,0,0,.5)",
+-        }}>{sc.text}</div>
++        }}>
++          {/* kinetic per-kata — tiap kata punch-in berurutan (bukan blok kaku) */}
++          {sc.text.split(/\s+/).map((w, i) => {
++            const ws = spring({ frame: frame - i * 2, fps, config: { damping: 12, stiffness: 180, mass: 0.4 } });
++            return (
++              <span key={i} style={{
++                display: "inline-block", marginRight: size * 0.22,
++                transform: `translateY(${(1 - ws) * 26}px) scale(${0.5 + 0.5 * ws}) rotate(${(1 - ws) * (i % 2 ? 6 : -6)}deg)`,
++                opacity: Math.min(ws * 2, 1),
++              }}>{w}</span>
++            );
++          })}
++        </div>
+         <div style={{ height: 7, width: lineW, borderRadius: 4, background: highlight }} />
+       </div>
+     </AbsoluteFill>
+@@ -139,11 +190,25 @@ const Karaoke: React.FC<{ sc: ViralScene; words: ViralKontenProps["words"]; high
+ const PointScene: React.FC<{ sc: ViralScene; idx: number; total: number; durF: number; words: ViralKontenProps["words"]; highlight: string }> =
+   ({ sc, idx, total, durF, words, highlight }) => {
+     const frame = useCurrentFrame();
+-    const chipS = spring({ frame: frame - 2, fps: 30, config: { damping: 12, stiffness: 180, mass: 0.45 } });
++    const { fps } = useVideoConfig();
++    const chipS = spring({ frame: frame - 2, fps, config: { damping: 12, stiffness: 180, mass: 0.45 } });
+     const flash = Math.max(0, 0.55 * (1 - frame / 3)); // flash-putih cepat saat ganti scene
++    // word-pulse: bg berdenyut halus tiap kata baru diucapkan (ritme suara)
++    const t = sc.start + frame / fps;
++    const inScene = words.filter((w) => w.e > sc.start + 0.01 && w.s < sc.end - 0.01);
++    let act = -1;
++    for (let i = 0; i < inScene.length; i++) {
++      if (t >= inScene[i].s && t < inScene[i].e) { act = i; break; }
++      if (inScene[i].e <= t) act = i;
++    }
++    const actStartF = act >= 0 ? Math.max(0, Math.round((inScene[act].s - sc.start) * fps)) : 0;
++    const bump = 0.026 * Math.max(0, 1 - (frame - actStartF) / 7); // denyut cepat lalu meluruh
++    // emoji chip kanan-atas — muncul dengan bounce + bob pelan
++    const emo = emojiFor(sc.text);
++    const emoS = spring({ frame: frame - 6, fps, config: { damping: 9, stiffness: 190, mass: 0.45 } });
+     return (
+       <AbsoluteFill>
+-        <KenBurns img={sc.img} durF={durF} seed={idx + 1} />
++        <KenBurns img={sc.img} durF={durF} seed={idx + 1} bump={bump} />
+         <Vignette strength={0.5} />
+         <div style={{
+           position: "absolute", top: 34, left: 24, display: "flex", alignItems: "center", gap: 10,
+@@ -154,6 +219,11 @@ const PointScene: React.FC<{ sc: ViralScene; idx: number; total: number; durF: n
+             borderRadius: 999, padding: "5px 14px", fontSize: 17, fontWeight: 900, letterSpacing: 1,
+           }}>{idx + 1}/{total}</div>
+         </div>
++        <div style={{
++          position: "absolute", top: 26, right: 22, fontSize: 52, lineHeight: 1,
++          transform: `scale(${Math.max(emoS, 0.001)}) rotate(${Math.sin(frame / 9) * 8}deg)`,
++          filter: `drop-shadow(0 0 ${14 + Math.sin(frame / 5) * 6}px rgba(0,0,0,.5))`,
++        }}>{emo}</div>
+         <Karaoke sc={sc} words={words} highlight={highlight} />
+         <AbsoluteFill style={{ background: "#fff", opacity: flash, pointerEvents: "none" }} />
+       </AbsoluteFill>
+@@ -169,6 +239,7 @@ const CtaScene: React.FC<{ sc: ViralScene; durF: number; highlight: string }> =
+   const pulse = 1 + Math.sin(frame / 4) * 0.035;
+   const bob = Math.sin(frame / 4) * 7;
+   const size = sc.text.length > 22 ? 32 : sc.text.length > 14 ? 38 : 44;
++  const shine = ((frame % 42) / 42) * 520 - 220; // sweep cahaya melintas pill
+   const t0 = ((frame - 4) % 28 + 28) % 28; // confetti meledak berulang
+   const conf = [...Array(18)].map((_, k) => {
+     const ang = (k / 18) * Math.PI * 2 + rnd(k) * 0.6;
+@@ -194,7 +265,14 @@ const CtaScene: React.FC<{ sc: ViralScene; durF: number; highlight: string }> =
+             padding: "20px 30px", fontFamily: CAP_FONT, fontSize: size, color: "#0b0b0b",
+             letterSpacing: 1, textTransform: "uppercase", whiteSpace: "pre-wrap", textAlign: "center",
+             boxShadow: `0 0 40px ${highlight}88`,
+-          }}>{sc.text || "FOLLOW SEKARANG"}</div>
++          }}>
++            {sc.text || "FOLLOW SEKARANG"}
++            <div style={{
++              position: "absolute", top: 0, bottom: 0, width: 64, left: shine,
++              background: "linear-gradient(100deg, transparent, rgba(255,255,255,.55), transparent)",
++              transform: "skewX(-18deg)",
++            }} />
++          </div>
+         </div>
+         <span style={{ fontSize: 42, color: highlight, transform: `translateX(${bob}px)`, textShadow: `0 0 ${26}px ${highlight}` }}>→</span>
+       </div>
+@@ -224,6 +302,19 @@ export const ViralKonten: React.FC<ViralKontenProps> = (props) => {
+ 
+   return (
+     <AbsoluteFill style={{ backgroundColor: "#050505", width, height, fontFamily: '"Montserrat XB", sans-serif' }}>
++      <Particles accent={highlight} />
++
++      {/* SFX: whoosh di hook, pop tiap ganti scene, ding saat CTA — track audio
++          komposisi (TTS voiceover tetap di-mux ffmpeg agar sync & bisa fade) */}
++      <Sequence from={0}>
++        <Audio src={staticFile("sfx/whoosh.wav")} volume={0.6} />
++      </Sequence>
++      {scenes.slice(1).map((s, i) => (
++        <Sequence key={`sfx-${i}`} from={Math.max(0, Math.round(s.start * fps))}>
++          <Audio src={staticFile(s.kind === "cta" ? "sfx/ding.wav" : "sfx/pop.wav")} volume={s.kind === "cta" ? 0.55 : 0.45} />
++        </Sequence>
++      ))}
++
+       {/* Sequence → useCurrentFrame() di dalam scene = frame LOKAL scene
+           (punch/flash/chip & timing karaoke akurat per scene, bukan global) */}
+       <Sequence key={`sc-${cur}`} from={startF} durationInFrames={durF} name={sc.kind}>
+-- 
+2.47.3
+
