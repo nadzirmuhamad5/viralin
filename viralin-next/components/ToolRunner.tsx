@@ -20,6 +20,7 @@ export default function ToolRunner({ tool }: { tool: ToolDef }) {
     return init;
   });
   const [job, setJob] = useState<Job | null>(null);
+  const [history, setHistory] = useState<Job[]>([]);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const [cookies, setCookies] = useState<{ id: string; name: string } | null>(null);
@@ -36,14 +37,31 @@ export default function ToolRunner({ tool }: { tool: ToolDef }) {
     sfx: (formVals.sfx || "ya") !== "tidak",
   }), [formVals]);
 
-  useEffect(() => {
-    return () => {
-      if (pollRef.current) clearInterval(pollRef.current);
-    };
+  const stopPoll = useCallback(() => {
+    if (pollRef.current) clearInterval(pollRef.current);
+    pollRef.current = null;
   }, []);
 
+  /** Riwayat job tool ini — dari store persisten (data/jobs/*.json), bertahan antar restart. */
+  const loadHistory = useCallback(async () => {
+    try {
+      const r = await fetch("/api/jobs", { cache: "no-store" });
+      if (!r.ok) return;
+      const j = (await r.json()) as { jobs: Job[] };
+      // job lama tanpa kolom tool = klip-ai
+      setHistory(j.jobs.filter((x) => (x.tool || "klip-ai") === tool.id).slice(0, 8));
+    } catch {
+      /* server belum siap — diulang saat job selesai */
+    }
+  }, [tool.id]);
+
+  useEffect(() => {
+    void loadHistory();
+    return stopPoll;
+  }, [loadHistory, stopPoll]);
+
   const watch = useCallback((id: string) => {
-    if (pollRef.current) clearInterval(pollRef.current);
+    stopPoll();
     pollRef.current = setInterval(async () => {
       try {
         const r = await fetch(`/api/jobs/${id}`, { cache: "no-store" });
@@ -51,13 +69,14 @@ export default function ToolRunner({ tool }: { tool: ToolDef }) {
         const j: Job = await r.json();
         setJob(j);
         if (j.status === "done" || j.status === "fail") {
-          if (pollRef.current) clearInterval(pollRef.current);
+          stopPoll();
+          void loadHistory(); // refresh daftar riwayat
         }
       } catch {
         /* dev server restart — coba lagi */
       }
     }, 1500);
-  }, []);
+  }, [loadHistory, stopPoll]);
 
   const uploadField = async (key: string, f: File) => {
     setErr("");
@@ -249,6 +268,43 @@ export default function ToolRunner({ tool }: { tool: ToolDef }) {
         </button>
       </div>
       {job && <JobPanel job={job} />}
+      {history.length > 0 && (
+        <div className="panel">
+          <h3 style={{ marginTop: 0 }}>Riwayat {tool.name}</h3>
+          <p className="mdesc">Tersimpan di server (persisten antar restart) — klik untuk buka lagi hasilnya.</p>
+          <div style={{ display: "grid", gap: 8, marginTop: 10 }}>
+            {history.map((h) => (
+              <button
+                key={h.id}
+                onClick={() => {
+                  stopPoll();
+                  setJob(h);
+                  if (h.status === "run" || h.status === "queued") watch(h.id);
+                }}
+                style={{
+                  display: "flex", gap: 10, alignItems: "center", textAlign: "left",
+                  padding: "10px 12px", borderRadius: 10, cursor: "pointer", width: "100%",
+                  border: "1px solid rgba(255,255,255,.14)", color: "inherit",
+                  background: h.id === job?.id ? "rgba(255,255,255,.10)" : "transparent",
+                }}
+              >
+                <span aria-hidden>{h.status === "done" ? "✅" : h.status === "fail" ? "❌" : "⏳"}</span>
+                <span style={{ flex: 1, minWidth: 0 }}>
+                  <b style={{ display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {h.title || h.id}
+                  </b>
+                  <small style={{ opacity: 0.65 }}>
+                    {new Date(h.createdAt).toLocaleString("id-ID", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })}
+                    {h.clips?.length ? ` · ${h.clips.length} klip` : ""}
+                    {h.files?.length ? ` · ${h.files.length} file` : ""}
+                    {h.status === "fail" && h.error ? ` · ${(h.error || "").slice(0, 60)}` : ""}
+                  </small>
+                </span>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
     </>
   );
 }
