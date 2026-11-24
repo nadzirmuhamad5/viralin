@@ -464,9 +464,9 @@ const BulletScene: React.FC<{ t: string; a: AnimId; idx: number; accent: string;
             <Img src={img.startsWith("http") ? img : staticFile(img)} style={{
               width: "100%", height: "100%", objectFit: "cover",
               transform: `scale(${1.12 + 0.08 * Math.min(frame / Math.max(bulletF, 1), 1)})`,
-              opacity: 0.55 * Math.min(enter * 2, 1) * (1 - exitP),
+              opacity: 0.85 * Math.min(enter * 2, 1) * (1 - exitP),
             }} />
-            <AbsoluteFill style={{ background: `linear-gradient(180deg, ${chip}aa 0%, ${chip}f2 100%)` }} />
+            <AbsoluteFill style={{ background: `linear-gradient(180deg, ${chip}55 0%, ${chip}d9 100%)` }} />
           </AbsoluteFill>
         )}
         {a === "alert" && <AbsoluteFill style={{ background: RED, opacity: (0.09 + 0.07 * Math.abs(Math.sin(frame / 2))) * (1 - exitP) }} />}

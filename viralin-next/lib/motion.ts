@@ -109,10 +109,14 @@ export function motionScenes(p: MotionStudioProps): Array<{ t: string; a: AnimId
   return bs.map((t, i) => ({ t, a: as[i] }));
 }
 
-/** Path ilustrasi latar per poin (urut; "" = tanpa gambar). */
+/** Path ilustrasi latar per poin (urut; "" = tanpa gambar).
+ *  Terima path relatif "motion/…" (Player) DAN URL absolut http… (renderer server). */
 export function motionImgs(p: MotionStudioProps): string[] {
   const raw = (p.imgs || "").split(/\n+/).map((s) => s.trim());
-  return motionBullets(p).map((_, i) => (raw[i] || "").startsWith("motion/") ? raw[i] : "");
+  return motionBullets(p).map((_, i) => {
+    const v = raw[i] || "";
+    return v.startsWith("motion/") || v.startsWith("http") ? v : "";
+  });
 }
 
 /** Durasi total komposisi dalam frame (hook + n poin + CTA) — mengikuti durasi form. */
