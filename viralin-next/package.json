@@ -9,9 +9,13 @@
     "start": "next start"
   },
   "dependencies": {
+    "@remotion/bundler": "^4.0.546",
+    "@remotion/player": "^4.0.546",
+    "@remotion/renderer": "^4.0.546",
     "next": "^16",
     "react": "^19",
-    "react-dom": "^19"
+    "react-dom": "^19",
+    "remotion": "^4.0.546"
   },
   "devDependencies": {
     "@types/node": "^24",

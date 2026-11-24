@@ -1,10 +1,16 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import dynamic from "next/dynamic";
 import type { Job } from "@/lib/store";
 import { PRESETS, DEFAULT_PRESET } from "@/lib/captions";
 import type { ToolDef, ToolField } from "@/lib/tools";
+import { motionDurationFrames, PALETTES, type MotionStudioProps, type WarnaId } from "@/lib/motion";
+import { MotionStudio } from "@/remotion/MotionStudio";
 import JobPanel from "./JobPanel";
+
+/** Player Remotion — client-only (pola resmi Remotion + Next: ssr:false). */
+const Player = dynamic(() => import("@remotion/player").then((m) => m.Player), { ssr: false });
 
 /** Form + submit + polling untuk SATU tool — dipakai di halaman /fitur/[slug]. */
 export default function ToolRunner({ tool }: { tool: ToolDef }) {
@@ -20,6 +26,15 @@ export default function ToolRunner({ tool }: { tool: ToolDef }) {
   const [cookiesText, setCookiesText] = useState("");
   const hasSource = tool.fields.some((f) => f.key === "source");
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  /** Props live untuk preview Player — hanya tool motion-studio. */
+  const previewProps = useMemo<MotionStudioProps>(() => ({
+    judul: (formVals.judul || "VIRALIN").toUpperCase().slice(0, 40),
+    bullets: formVals.bullets || "",
+    cta: formVals.cta || "FOLLOW SEKARANG",
+    warna: (PALETTES[formVals.warna as WarnaId] ? formVals.warna : "green") as WarnaId,
+    sfx: (formVals.sfx || "ya") !== "tidak",
+  }), [formVals]);
 
   useEffect(() => {
     return () => {
@@ -210,6 +225,24 @@ export default function ToolRunner({ tool }: { tool: ToolDef }) {
             </label>
           )}
         </div>
+        {tool.id === "motion-studio" && (
+          <div className="fld" style={{ marginTop: 8 }}>
+            <span>Preview live (Remotion Player)</span>
+            <Player
+              component={MotionStudio}
+              inputProps={previewProps}
+              durationInFrames={motionDurationFrames(previewProps)}
+              compositionWidth={540}
+              compositionHeight={960}
+              fps={30}
+              style={{ width: 270, maxWidth: "100%", borderRadius: 12, overflow: "hidden" }}
+              controls
+              autoPlay
+              loop
+            />
+            <em className="fhint">Preview berubah langsung saat lu isi form. Hasil render server pakai SFX + font yang sama.</em>
+          </div>
+        )}
         {err && <div className="err">❌ {err}</div>}
         <button className="btn btn-white run" onClick={submit} disabled={running}>
           {running ? "⚙️ Memproses…" : "▶️ Jalankan"}

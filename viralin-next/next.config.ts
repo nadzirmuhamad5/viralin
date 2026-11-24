@@ -7,6 +7,10 @@ const nextConfig: NextConfig = {
   // teruji — type-check build dilewati agar `next build` tidak macet.
   typescript: { ignoreBuildErrors: true },
   eslint: { ignoreDuringBuilds: true },
+  // Remotion Next.js guide: renderer/bundler/remotion TIDAK boleh dibundel
+  // server (pakai require runtime) — memutihkan studio/compositor noise.
+  serverExternalPackages: ["remotion", "@remotion/bundler", "@remotion/renderer"],
+  transpilePackages: ["@remotion/player"],
 };
 
 export default nextConfig;

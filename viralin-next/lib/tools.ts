@@ -127,6 +127,26 @@ export const TOOLS: ToolDef[] = [
     ],
   },
   {
+    id: "motion-studio", name: "Motion Studio", icon: "🎬", group: "Editor & Komposisi", badge: "NEW", live: true,
+    desc: "Motion grafik engine Remotion: preview live di browser, hook animasi → bullet reveal → CTA pulse, SFX sinkron, render MP4 30fps.",
+    fields: [
+      { key: "judul", label: "Judul / hook", type: "text", required: true, placeholder: "RAHASIA KONTEN VIRAL" },
+      { key: "bullets", label: "Bullet (1 per baris, maks 5)", type: "textarea",
+        placeholder: "Hook 3 detik pertama\nGaya bicara santai\nCTA jelas di akhir" },
+      { key: "cta", label: "CTA penutup", type: "text", placeholder: "FOLLOW SEKARANG" },
+      { key: "warna", label: "Warna tema", type: "select", default: "green",
+        options: [
+          { value: "green", label: "Hijau Neon" }, { value: "blue", label: "Biru Tech" },
+          { value: "orange", label: "Oranye Panas" }, { value: "pink", label: "Pink Viral" },
+        ] },
+      { key: "sfx", label: "Audio SFX", type: "select", default: "ya",
+        options: [
+          { value: "ya", label: "Dengan SFX (whoosh + pop + ding)" },
+          { value: "tidak", label: "Tanpa audio" },
+        ] },
+    ],
+  },
+  {
     id: "konten-tempel", name: "VIRAL Content Creator", icon: "🚀", group: "AI Generatif", badge: "VIRAL", live: true,
     desc: "Satu ide → naskah LLM → suara TTS → background AI → video vertikal ber-caption. Faceless, gratis.",
     fields: [

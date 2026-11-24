@@ -6,6 +6,10 @@ import * as mk from "./mediakit";
 import { run, tailErr } from "./exec";
 import { PRESETS, type Word } from "./captions";
 import type { Job } from "./store";
+import type { MotionStudioProps, WarnaId } from "./motion";
+
+/** Cache bundle Remotion (webpack) — sekali bundle, dipakai semua job berikutnya. */
+let bundleCache: string | null = null;
 
 type Input = Record<string, string>;
 type Log = (l: string) => void;
@@ -26,6 +30,7 @@ export async function runTool(job: Job, dir: string, log: Log): Promise<void> {
     thumbnail: thumbnail,
     "highlight-bola": highlightBola,
     "motion-graphic": motionGraphic,
+    "motion-studio": motionStudio,
     "konten-tempel": kontenTempel,
     transcript: transcript,
     "title-optimizer": titleOptimizer,
@@ -255,6 +260,51 @@ export async function runTool(job: Job, dir: string, log: Log): Promise<void> {
     job.files.push({ file: "motion-intro.mp4", label: "Intro 5s — kartu judul animasi", kind: "video" });
     job.title = `Motion Graphic — ${judul}`;
     log("[motion] intro jadi");
+  }
+
+  async function motionStudio(_d: string, log: Log): Promise<void> {
+    const judul = (inputs.judul || "VIRALIN").toUpperCase().slice(0, 40);
+    const items = (inputs.bullets || "").split(/\n+/).map((s) => s.trim()).filter(Boolean).slice(0, 5);
+    const cta = (inputs.cta || "").slice(0, 40);
+    const warna = (["green", "blue", "orange", "pink"].includes(inputs.warna || "") ? inputs.warna : "green") as WarnaId;
+    const sfxOn = (inputs.sfx || "ya") !== "tidak";
+    const props: MotionStudioProps = { judul, bullets: items.join("\n"), cta, warna, sfx: sfxOn };
+    log(`[remotion] hook "${judul}" · ${items.length} bullet · CTA "${cta}" · tema ${warna}${sfxOn ? " +sfx" : ""}`);
+    // pastikan font tersedia di public/ (recycle bisa menghapusnya — copy ulang)
+    const fontDst = path.join(process.cwd(), "public", "fonts", "Montserrat-ExtraBold.ttf");
+    if (!(await fs.stat(fontDst).catch(() => null))) {
+      await fs.mkdir(path.dirname(fontDst), { recursive: true });
+      await fs.copyFile(path.join(process.cwd(), "assets", "caption-fonts", "Montserrat-ExtraBold.ttf"), fontDst);
+    }
+    const { ensureBrowser } = await import("@remotion/renderer");
+    await ensureBrowser();
+    log("[remotion] chrome headless siap — bundling komposisi…");
+    if (!bundleCache) {
+      const { bundle } = await import("@remotion/bundler");
+      // publicDir → staticFile() di komposisi menyajikan font & SFX sama-origin
+      bundleCache = await bundle({
+        entryPoint: path.join(process.cwd(), "remotion", "index.ts"),
+        publicDir: path.join(process.cwd(), "public"),
+      });
+      log("[remotion] bundle siap (di-cache untuk job berikutnya)");
+    }
+    const { selectComposition, renderMedia } = await import("@remotion/renderer");
+    const comp = await selectComposition({ serveUrl: bundleCache, id: "MotionStudio", inputProps: props });
+    const out = path.join(dir, "motion-studio.mp4");
+    log(`[remotion] render ${Math.round((comp.durationInFrames / comp.fps) * 10) / 10}s @${comp.fps}fps…`);
+    let last = 0;
+    await renderMedia({
+      composition: comp, serveUrl: bundleCache, codec: "h264", outputLocation: out,
+      inputProps: props,
+      onProgress: ({ progress }) => {
+        const pct = Math.floor(progress * 100);
+        if (pct >= last + 25) { last = Math.min(pct - (pct % 25), 75); log(`[remotion] render ${last + 25}%`); }
+      },
+    });
+    const st = await fs.stat(out);
+    job.files.push({ file: "motion-studio.mp4", label: `Motion Studio — ${judul}`, kind: "video" });
+    job.title = `Motion Studio (Remotion) — ${judul}`;
+    log(`[remotion] jadi (${(st.size / 1e6).toFixed(2)} MB)`);
   }
 
   async function kontenTempel(_d: string, log: Log): Promise<void> {
