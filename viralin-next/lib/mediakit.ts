@@ -1,6 +1,9 @@
 /** Kotak peralatan media bersama: sumber video, whisper, TTS, render klip, LLM & gambar gratis. */
 import { promises as fs } from "fs";
+import { createWriteStream } from "fs";
 import path from "path";
+import { Readable } from "stream";
+import { pipeline } from "stream/promises";
 import { createHash } from "crypto";
 import { run, tailErr } from "./exec";
 import { buildAss, type Word } from "./captions";
@@ -194,12 +197,40 @@ export async function getSource(
       log("[sumber] unduhan selesai" + (client === "default" ? "" : ` (client ${client})`));
     } catch (e) {
       // toleransi lama: yt-dlp exit≠0 tapi file utuh sudah ada → lanjut
-      if (!(await fs.stat(src).then(() => true).catch(() => false))) throw e;
-      log("[sumber] warning yt-dlp diabaikan — file sudah tersimpan");
+      if (await fs.stat(src).then(() => true).catch(() => false)) {
+        log("[sumber] warning yt-dlp diabaikan — file sudah tersimpan");
+      } else if (process.env.VL_REMOTE_WORKER) {
+        // fallback terakhir tanpa cookies/proxy: remote worker di IP residential milik pengguna
+        await workerFetch(ref, src, log);
+      } else {
+        throw e;
+      }
     }
   }
   const dur = await probeDur(src);
   return { src, dur, title };
+}
+
+/** Unduh via remote worker (scripts/remote-worker.py di PC pengguna, IP residential). */
+async function workerFetch(ref: string, src: string, log: (l: string) => void): Promise<void> {
+  const base = (process.env.VL_REMOTE_WORKER || "").replace(/\/+$/, "");
+  log("[sumber] yt-dlp diblokir IP data center → coba remote worker…");
+  let r: Response;
+  try {
+    r = await fetch(`${base}/fetch?url=${encodeURIComponent(ref)}`, {
+      headers: process.env.VL_WORKER_TOKEN ? { "X-Worker-Token": process.env.VL_WORKER_TOKEN } : {},
+      signal: AbortSignal.timeout(1800_000),
+    });
+  } catch (e) {
+    throw new Error(`remote worker tak bisa dihubungi (${base}): ${(e as Error).message}`);
+  }
+  if (!r.ok || !(r.headers.get("content-type") || "").startsWith("video/")) {
+    const body = (await r.json().catch(() => null)) as { error?: string } | null;
+    throw new Error(`remote worker juga gagal: ${body?.error || `HTTP ${r.status}`}`);
+  }
+  await pipeline(Readable.fromWeb(r.body as unknown as import("stream/web").ReadableStream), createWriteStream(src));
+  const size = (await fs.stat(src)).size;
+  log(`[sumber] remote worker sukses — ${(size / 1e6).toFixed(1)} MB diterima`);
 }
 
 export async function probeDur(src: string): Promise<number> {
