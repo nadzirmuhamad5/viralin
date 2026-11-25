@@ -9,9 +9,15 @@
     "start": "next start"
   },
   "dependencies": {
+    "@remotion/captions": "^4.0.547",
+    "@remotion/google-fonts": "^4.0.547",
+    "@remotion/media-utils": "^4.0.547",
+    "@remotion/paths": "^4.0.547",
+    "lucide-react": "^1.80.0",
     "next": "^16",
     "react": "^19",
-    "react-dom": "^19"
+    "react-dom": "^19",
+    "tailwindcss-animate": "^1.0.7"
   },
   "devDependencies": {
     "@types/node": "^24",
