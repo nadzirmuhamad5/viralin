@@ -150,6 +150,19 @@ export const TOOLS: ToolDef[] = [
     ],
   },
   {
+    id: "ragebait", name: "Rage Bait Studio", icon: "🔥", group: "AI Generatif", badge: "NEW", live: true,
+    desc: "Short rage bait ala kreator YouTube ID: hook provokatif + 3 momen nyebelin bernomor, ilustrasi komik AI, narasi gue/lu, karaoke merah, TTS pace cepat. Preset rage terkunci — tinggal isi topik.",
+    fields: [
+      { key: "topik", label: "Topik yang bikin darah naik", type: "text", required: true,
+        placeholder: "penumpang angkot paling nyebelin" },
+      { key: "voice", label: "Suara", type: "select", default: "id-ID-ArdiNeural",
+        options: [
+          { value: "id-ID-ArdiNeural", label: "Ardi — Pria 🇮🇩" },
+          { value: "id-ID-GadisNeural", label: "Gadis — Wanita 🇮🇩" },
+        ] },
+    ],
+  },
+  {
     id: "ai-image", name: "Klipers AI", icon: "🎨", group: "AI Generatif", badge: "NEW", live: true,
     desc: "Generator gambar AI gratis (pakai z-ai) — thumbnail, background, aset konten.",
     fields: [

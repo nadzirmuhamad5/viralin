@@ -10,6 +10,7 @@ import { run as thumbnail } from "./thumbnail";
 import { run as highlightBola } from "./highlight-bola";
 import { run as motionGraphic } from "./motion-graphic";
 import { run as kontenTempel } from "./konten-tempel";
+import { run as rageBait } from "./ragebait";
 import { run as transcript } from "./transcript";
 import { run as titleOptimizer } from "./title-optimizer";
 import { run as viralTips } from "./viral-tips";
@@ -30,6 +31,7 @@ export const TOOL_RUNNERS: Record<string, (ctx: ToolCtx) => Promise<void>> = {
   "highlight-bola": highlightBola,
   "motion-graphic": motionGraphic,
   "konten-tempel": kontenTempel,
+  ragebait: rageBait,
   transcript: transcript,
   "title-optimizer": titleOptimizer,
   "viral-tips": viralTips,
