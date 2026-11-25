@@ -5,6 +5,8 @@
  *  untuk menentukan batas scene secara presisi (bukan tebak per detik). */
 
 export type ViralSceneKind = "hook" | "poin" | "cta";
+/** Gaya konten: klasik (fakta/tips) atau rage (rage-bait ala shorts Issei Nugroho). */
+export type GayaId = "klasik" | "rage";
 
 export type ViralScene = {
   kind: ViralSceneKind;
@@ -12,6 +14,7 @@ export type ViralScene = {
   img: string; // URL absolut utk renderer (/api/asset/...) atau path relatif utk Player
   start: number; // detik
   end: number; // detik
+  judul?: string; // judul momen kapital (mode rage — tampil besar di scene poin)
 };
 
 export type ViralKontenProps = {
@@ -19,10 +22,12 @@ export type ViralKontenProps = {
   scenes: ViralScene[];
   words: { w: string; s: number; e: number }[]; // detik, dari whisper
   highlight: string; // warna kata aktif karaoke
+  gaya?: GayaId; // klasik (default) | rage
 };
 
 export const VIRAL_FPS = 30;
 export const VIRAL_HIGHLIGHT = "#FFD400";
+export const VIRAL_RAGE_HIGHLIGHT = "#FF3B30"; // merah darah — aksen rage-bait
 
 export const viralDurationFrames = (p: ViralKontenProps): number =>
   Math.max(30, Math.ceil((p.scenes.length ? p.scenes[p.scenes.length - 1].end : 5) * (p.fps || VIRAL_FPS)));

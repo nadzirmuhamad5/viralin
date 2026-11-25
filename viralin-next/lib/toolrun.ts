@@ -33,6 +33,7 @@ export async function runTool(job: Job, dir: string, log: Log): Promise<void> {
     "motion-graphic": motionGraphic,
     "motion-studio": motionStudio,
     "konten-tempel": kontenTempel,
+    ragebait: kontenTempel,
     transcript: transcript,
     "title-optimizer": titleOptimizer,
     "viral-tips": viralTips,
@@ -505,8 +506,12 @@ export async function runTool(job: Job, dir: string, log: Log): Promise<void> {
   }
 
   async function kontenTempel(_d: string, log: Log): Promise<void> {
-    const { VIRAL_FPS, VIRAL_HIGHLIGHT, alignScenes } = (await import("./viral"));
+    const { VIRAL_FPS, VIRAL_HIGHLIGHT, VIRAL_RAGE_HIGHLIGHT, alignScenes } = (await import("./viral"));
     const presetId = inputs.preset || job.captionPreset || "bold-impact";
+    // mode rage-bait (tool "ragebait"): hook provokatif + momen bernomor gue/lu,
+    // aksen merah, chip MOMEN x/y, ilustrasi komik, TTS cepat (+12%) — gaya terkunci
+    const rage = job.tool === "ragebait" || inputs.gaya === "rage";
+    let juduls: string[] = [];
     // 1. Naskah terstruktur: LLM → JSON {hook, points[], cta}; naskah manual → split kalimat
     let hook = "", cta = "";
     let points: string[] = [];
@@ -521,13 +526,18 @@ export async function runTool(job: Job, dir: string, log: Log): Promise<void> {
       const topik = (inputs.topik || "").trim();
       if (!topik) throw new Error("isi topik ATAU naskah");
       const raw = await mk.llmChat(
-        'Kamu penulis naskah video viral TikTok/Reels Indonesia. HOOK maks 8 kata yang bikin berhenti scroll (bisa provokatif/angka/pertanyaan), 3 POIN masing-masing maks 16 kata padat & spesifik, CTA maks 6 kata. Keluarkan HANYA JSON valid tanpa markdown: {"hook":"...","points":["...","...","..."],"cta":"..."}',
+        rage
+          ? 'Kamu penulis naskah short rage-bait viral Indonesia (ala video "3 Kelakuan Orang +62 Paling Bikin Emosi", durasi target 40-60 detik). HOOK = judul rage-bait maks 9 kata yang provokatif memancing emosi, diawali angka. 3 MOMEN: narasi masing-masing 2-3 kalimat (25-40 kata per momen) gaya santai gue/lu, ceritakan kelakuan step-by-step sampai punchline emosi. Kelakuannya WAJIB sopan-tapi-nyebelin yang relatable (mis. kaki di sandaran, potong antri, telpon speaker keras, rebutan kursi, sampah sembarangan) — DILARANG konten kotor/kemunasinan (kencing, pup, ludah, dll) dan tanpa nama orang nyata. Plus JUDUL MOMEN masing-masing 2-4 kata KAPITAL. CTA maks 6 kata. Keluarkan HANYA JSON valid tanpa markdown: {"hook":"...","points":["momen 1","momen 2","momen 3"],"juduls":["JUDUL 1","JUDUL 2","JUDUL 3"],"cta":"..."}'
+          : 'Kamu penulis naskah video viral TikTok/Reels Indonesia. HOOK maks 8 kata yang bikin berhenti scroll (bisa provokatif/angka/pertanyaan), 3 POIN masing-masing maks 16 kata padat & spesifik, CTA maks 6 kata. Keluarkan HANYA JSON valid tanpa markdown: {"hook":"...","points":["...","...","..."],"cta":"..."}',
         `Topik: ${topik}`, log);
       try {
         const m = raw.match(/\{[\s\S]*\}/);
-        const j = JSON.parse(m ? m[0] : raw) as { hook?: string; points?: string[]; cta?: string };
+        const j = JSON.parse(m ? m[0] : raw) as { hook?: string; points?: unknown[]; juduls?: unknown[]; cta?: string };
         hook = (j.hook || "").trim();
-        points = (Array.isArray(j.points) ? j.points : []).map((s) => String(s).trim()).filter(Boolean).slice(0, 4);
+        points = (Array.isArray(j.points) ? j.points : []).map((x) =>
+          typeof x === "string" ? x.trim() : String((x as { t?: unknown })?.t ?? "").trim()).filter(Boolean).slice(0, 4);
+        juduls = (Array.isArray(j.juduls) ? j.juduls : []).map((x) =>
+          String(x ?? "").trim().toUpperCase().slice(0, 24)).filter(Boolean).slice(0, 4);
         cta = (j.cta || "").trim();
       } catch { /* fallback di bawah */ }
       if (!hook) { // LLM nggak kasih JSON → raw text dibagi kalimat
@@ -545,7 +555,7 @@ export async function runTool(job: Job, dir: string, log: Log): Promise<void> {
     log(`[struktur] hook "${hook.slice(0, 44)}" · ${points.length} poin · CTA "${cta.slice(0, 32)}"`);
     // 2. TTS + whisper word-timing → batas scene presisi (bukan tebak per detik)
     const speech = path.join(dir, "speech.mp3");
-    await mk.ttsSynth(naskah, inputs.voice || "id-ID-ArdiNeural", speech, "+0%", log);
+    await mk.ttsSynth(naskah, inputs.voice || "id-ID-ArdiNeural", speech, rage ? "+12%" : "+0%", log);
     const wav = await mk.extractAudio(speech, dir);
     const info = await mk.transcribe(wav, dir, log);
     const words: Word[] = info.segments.flatMap((s) => s.words || []);
@@ -561,11 +571,17 @@ export async function runTool(job: Job, dir: string, log: Log): Promise<void> {
       const f = path.join(pubDir, `scene-${i}.png`);
       if ((inputs.bg || "ai") === "ai" && kinds[i] !== "cta") {
         const desc = kinds[i] === "hook"
-          ? `latar dramatis sinematik untuk video tentang: ${inputs.topik || hook}`
-          : `latar ilustratif untuk narasi tentang: ${texts[i]}`;
+          ? rage
+            ? `adegan kelakuan penumpang nyebelin di kendaraan umum: ${inputs.topik || hook}`
+            : `latar dramatis sinematik untuk video tentang: ${inputs.topik || hook}`
+          : rage
+            ? `momen kelakuan nyebelin: ${texts[i]}`
+            : `latar ilustratif untuk narasi tentang: ${texts[i]}`;
         try {
           await mk.zaiImage(
-            `Background sinematik vertikal 9:16, kontras tinggi, ${desc}. SANGAT PENTING: jangan menulis teks, huruf, angka, atau karakter tulisan apapun di dalam gambar; tanpa watermark; komposisi bersih; gelap di tengah-bawah agar caption terbaca.`,
+            rage
+              ? `Ilustrasi kartun digital vertikal 9:16 menggambarkan adegan: ${desc}. Komposisi bervariasi (wide/medium/close-up, latar konteks kejadian terlihat jelas), ekspresi wajah berlebihan, warna kontras mencolok. SANGAT PENTING: gambar TANPA teks sama sekali — tanpa huruf, tanpa angka, tanpa balon kata, tanpa tulisan bahasa apapun, tanpa logo atau watermark; area bawah gelap polos agar caption terbaca.`
+              : `Background sinematik vertikal 9:16, kontras tinggi, ${desc}. SANGAT PENTING: jangan menulis teks, huruf, angka, atau karakter tulisan apapun di dalam gambar; tanpa watermark; komposisi bersih; gelap di tengah-bawah agar caption terbaca.`,
             f, log);
         } catch (e) {
           log(`[latar] scene ${i} gagal — pakai gradient (${String((e as Error)?.message || e).slice(0, 50)})`);
@@ -589,9 +605,14 @@ export async function runTool(job: Job, dir: string, log: Log): Promise<void> {
     // 4. Render Remotion: hook punch-in + Ken Burns + karaoke + progress bar + CTA
     const props: ViralKontenProps = {
       fps: VIRAL_FPS,
-      highlight: VIRAL_HIGHLIGHT,
+      highlight: rage ? VIRAL_RAGE_HIGHLIGHT : VIRAL_HIGHLIGHT,
+      ...(rage ? { gaya: "rage" as const } : {}),
       words: words.map((w) => ({ w: w.word, s: w.start, e: w.end })),
-      scenes: texts.map((text, i) => ({ kind: kinds[i], text, img: imgs[i], start: bounds[i].start, end: bounds[i].end })),
+      scenes: texts.map((text, i) => ({
+        kind: kinds[i], text, img: imgs[i], start: bounds[i].start, end: bounds[i].end,
+        // judul momen (mode rage): juduls[0] → poin pertama, dst.
+        ...(rage && juduls[i - 1] ? { judul: juduls[i - 1] } : {}),
+      })),
     };
     const { ensureBrowser } = await import("@remotion/renderer");
     await ensureBrowser();
@@ -633,8 +654,8 @@ export async function runTool(job: Job, dir: string, log: Log): Promise<void> {
     job.clips.push({ file: "konten-viral.mp4", thumb: "th-konten.jpg", start: 0,
       end: Math.round(dur * 10) / 10, seconds: Math.round(dur * 10) / 10, bytes: st.size,
       title: (hook.slice(0, 50) || "Konten Viral"), lines: words.length, preset: presetId });
-    job.title = `VIRAL Content Creator — ${hook.slice(0, 40)}`;
-    log(`[konten] jadi ${Math.round(dur)}s, ${texts.length} scene (${(st.size / 1e6).toFixed(2)} MB)`);
+    job.title = `${rage ? "Rage Bait Studio" : "VIRAL Content Creator"} — ${hook.slice(0, 40)}`;
+    log(`[konten] jadi ${Math.round(dur)}s, ${texts.length} scene${rage ? " · rage-bait" : ""} (${(st.size / 1e6).toFixed(2)} MB)`);
   }
 
   async function transcript(_d: string, log: Log): Promise<void> {

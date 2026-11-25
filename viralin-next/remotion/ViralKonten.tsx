@@ -44,6 +44,9 @@ const emojiFor = (t: string): string => {
   return "✨";
 };
 
+/** Emoji reaksi mode rage — rotasi tetap per momen (marah/nanggung, khas komentar sosial). */
+const RAGE_EMOJIS = ["🤬", "😤", "💀", "🤡", "😡", "🤦"];
+
 /* ═══════════════ PARTIKEL naik pelan (layer global, halus) ═══════════════ */
 
 const Particles: React.FC<{ accent: string }> = ({ accent }) => {
@@ -100,7 +103,7 @@ const Vignette: React.FC<{ strength: number }> = ({ strength }) => (
 
 /* ═══════════════ HOOK: pattern-interrupt ═══════════════ */
 
-const HookScene: React.FC<{ sc: ViralScene; durF: number; highlight: string }> = ({ sc, durF, highlight }) => {
+const HookScene: React.FC<{ sc: ViralScene; durF: number; highlight: string; rage?: boolean }> = ({ sc, durF, highlight, rage }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
   const s = spring({ frame, fps, config: { damping: 11, stiffness: 170, mass: 0.55 } });
@@ -120,7 +123,7 @@ const HookScene: React.FC<{ sc: ViralScene; durF: number; highlight: string }> =
           background: highlight, color: "#0b0b0b", fontSize: 17, fontWeight: 900, letterSpacing: 2,
           padding: "6px 16px", borderRadius: 999, transform: `scale(${Math.max(badgeS, 0.001)}) rotate(-2deg)`,
           boxShadow: `0 0 26px ${highlight}88`,
-        }}>JANGAN SKIP 👀</div>
+        }}>{rage ? "GAK MASUK AKAL 😡" : "JANGAN SKIP 👀"}</div>
         <div style={{
           fontFamily: CAP_FONT, fontSize: size, lineHeight: 1.12, textAlign: "center", color: "#fff",
           textTransform: "uppercase", WebkitTextStroke: "2px #000",
@@ -187,8 +190,8 @@ const Karaoke: React.FC<{ sc: ViralScene; words: ViralKontenProps["words"]; high
 
 /* ═══════════════ SCENE POIN + chip counter + flash ═══════════════ */
 
-const PointScene: React.FC<{ sc: ViralScene; idx: number; total: number; durF: number; words: ViralKontenProps["words"]; highlight: string }> =
-  ({ sc, idx, total, durF, words, highlight }) => {
+const PointScene: React.FC<{ sc: ViralScene; idx: number; total: number; durF: number; words: ViralKontenProps["words"]; highlight: string; rage?: boolean }> =
+  ({ sc, idx, total, durF, words, highlight, rage }) => {
     const frame = useCurrentFrame();
     const { fps } = useVideoConfig();
     const chipS = spring({ frame: frame - 2, fps, config: { damping: 12, stiffness: 180, mass: 0.45 } });
@@ -204,7 +207,7 @@ const PointScene: React.FC<{ sc: ViralScene; idx: number; total: number; durF: n
     const actStartF = act >= 0 ? Math.max(0, Math.round((inScene[act].s - sc.start) * fps)) : 0;
     const bump = 0.026 * Math.max(0, 1 - (frame - actStartF) / 7); // denyut cepat lalu meluruh
     // emoji chip kanan-atas — muncul dengan bounce + bob pelan
-    const emo = emojiFor(sc.text);
+    const emo = rage ? RAGE_EMOJIS[idx % RAGE_EMOJIS.length] : emojiFor(sc.text);
     const emoS = spring({ frame: frame - 6, fps, config: { damping: 9, stiffness: 190, mass: 0.45 } });
     return (
       <AbsoluteFill>
@@ -217,13 +220,28 @@ const PointScene: React.FC<{ sc: ViralScene; idx: number; total: number; durF: n
           <div style={{
             background: "rgba(0,0,0,.55)", border: `2px solid ${highlight}`, color: highlight,
             borderRadius: 999, padding: "5px 14px", fontSize: 17, fontWeight: 900, letterSpacing: 1,
-          }}>{idx + 1}/{total}</div>
+          }}>{rage ? `MOMEN ${idx + 1}/${total}` : `${idx + 1}/${total}`}</div>
         </div>
         <div style={{
           position: "absolute", top: 26, right: 22, fontSize: 52, lineHeight: 1,
           transform: `scale(${Math.max(emoS, 0.001)}) rotate(${Math.sin(frame / 9) * 8}deg)`,
           filter: `drop-shadow(0 0 ${14 + Math.sin(frame / 5) * 6}px rgba(0,0,0,.5))`,
         }}>{emo}</div>
+        {/* mode rage: judul momen kapital (dari LLM) pop-in besar di bawah chip */}
+        {rage && sc.judul && (() => {
+          const js = spring({ frame: frame - 8, fps, config: { damping: 11, stiffness: 190, mass: 0.45 } });
+          return (
+            <div style={{
+              position: "absolute", top: 112, left: 20, right: 20, textAlign: "center",
+              fontFamily: CAP_FONT, fontSize: sc.judul.length > 20 ? 30 : sc.judul.length > 11 ? 37 : 44,
+              lineHeight: 1.15, color: "#fff", textTransform: "uppercase",
+              WebkitTextStroke: "2.5px #000", paintOrder: "stroke fill",
+              textShadow: `0 0 26px ${highlight}55, 0 4px 18px rgba(0,0,0,.6)`,
+              transform: `scale(${0.6 + 0.4 * Math.max(js, 0.001)}) rotate(${(1 - js) * -5}deg)`,
+              opacity: Math.min(js * 2, 1),
+            }}>{sc.judul}</div>
+          );
+        })()}
         <Karaoke sc={sc} words={words} highlight={highlight} />
         <AbsoluteFill style={{ background: "#fff", opacity: flash, pointerEvents: "none" }} />
       </AbsoluteFill>
@@ -284,6 +302,7 @@ const CtaScene: React.FC<{ sc: ViralScene; durF: number; highlight: string }> = 
 
 export const ViralKonten: React.FC<ViralKontenProps> = (props) => {
   const { scenes, words, highlight } = props;
+  const rage = props.gaya === "rage";
   const frame = useCurrentFrame();
   const { fps, width, height } = useVideoConfig();
   const dur = viralDurationFrames(props);
@@ -322,11 +341,11 @@ export const ViralKonten: React.FC<ViralKontenProps> = (props) => {
           <>
             <KenBurns img={sc.img} durF={durF} seed={0} punch />
             <Vignette strength={0.62} />
-            <HookScene sc={sc} durF={durF} highlight={highlight} />
+            <HookScene sc={sc} durF={durF} highlight={highlight} rage={rage} />
           </>
         )}
         {sc.kind === "poin" && (
-          <PointScene sc={sc} idx={poinIdx} total={poinTotal} durF={durF} words={words} highlight={highlight} />
+          <PointScene sc={sc} idx={poinIdx} total={poinTotal} durF={durF} words={words} highlight={highlight} rage={rage} />
         )}
         {sc.kind === "cta" && (
           <>

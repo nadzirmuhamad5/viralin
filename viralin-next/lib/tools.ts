@@ -208,6 +208,25 @@ export const TOOLS: ToolDef[] = [
     ],
   },
   {
+    id: "ragebait", name: "Rage Bait Studio", icon: "😡", group: "AI Generatif", badge: "VIRAL", live: true,
+    desc: "Short rage-bait ala Issei Nugroho: judul provokatif + momen bernomor gaya gue/lu, ilustrasi komik, narasi cepat, aksen merah.",
+    fields: [
+      { key: "topik", label: "Ide / topik rage bait (kalau kosong, pakai naskah)", type: "text",
+        placeholder: "kelakuan penumpang angkot paling bikin darah tinggi" },
+      { key: "naskah", label: "Atau naskah sendiri", type: "textarea",
+        placeholder: "Tulis naskah lengkap di sini… (kalau diisi, topik diabaikan)" },
+      { key: "voice", label: "Suara narasi", type: "select", default: "id-ID-ArdiNeural",
+        options: [
+          { value: "id-ID-ArdiNeural", label: "Ardi — Pria 🇮🇩" },
+          { value: "id-ID-GadisNeural", label: "Gadis — Wanita 🇮🇩" },
+          { value: "en-US-AndrewMultilingualNeural", label: "Andrew — multibahasa" },
+          { value: "en-US-AvaMultilingualNeural", label: "Ava — multibahasa" },
+        ], hint: "dibacakan cepat +12% — pace khas shorts rage bait" },
+      { key: "preset", label: "Gaya caption", type: "select", default: "bold-impact",
+        options: [], hint: "Diisi otomatis dari picker preset." },
+    ],
+  },
+  {
     id: "ai-image", name: "Klipers AI", icon: "🎨", group: "AI Generatif", badge: "NEW", live: true,
     desc: "Generator gambar AI gratis (pakai z-ai) — thumbnail, background, aset konten.",
     fields: [
