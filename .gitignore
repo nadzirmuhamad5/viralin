@@ -31,3 +31,4 @@ __pycache__/
 data/
 download/e2e-ujian.mp4
 scripts/e2e-all-results.json
+*.tsbuildinfo
