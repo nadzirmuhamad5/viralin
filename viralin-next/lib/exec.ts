@@ -17,7 +17,7 @@ export function run(
       cmd.slice(1),
       { maxBuffer: 64 << 20, timeout: opts.timeout ?? 600_000, env: opts.env ?? process.env },
       (err, stdout, stderr) => {
-        if (err && (err as NodeJS.Process & { killed?: boolean }).killed) {
+        if (err && err.killed) {
           reject(new Error(`timeout: ${cmd[0]}`));
         } else {
           resolve({

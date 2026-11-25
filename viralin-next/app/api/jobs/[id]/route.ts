@@ -1,5 +1,5 @@
 /** GET /api/jobs/<id> — status job (dipakai client untuk polling). */
-import { getJob } from "@/lib/store";
+import { getJob, publicJob } from "@/lib/store";
 
 export async function GET(
   _req: Request,
@@ -8,5 +8,6 @@ export async function GET(
   const { id } = await params;
   const job = await getJob(id);
   if (!job) return Response.json({ error: "job tidak ditemukan" }, { status: 404 });
-  return Response.json(job);
+  // cookies tidak boleh bocor ke client
+  return Response.json(publicJob(job));
 }

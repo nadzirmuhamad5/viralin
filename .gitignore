@@ -25,3 +25,9 @@ __pycache__/
 
 # kredensial lokal — jangan pernah di-push
 .env
+.env.local
+
+# data runtime & artefak uji (regenerable) — task 3-d
+data/
+download/e2e-ujian.mp4
+scripts/e2e-all-results.json

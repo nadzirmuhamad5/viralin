@@ -28,7 +28,7 @@ export type ToolDef = {
 
 const SOURCE_FIELD: ToolField = {
   key: "source", label: "Video sumber", type: "url",
-  placeholder: "http://127.0.0.1:8080/e2e-ujian.mp4 atau URL YouTube/TikTok",
+  placeholder: "https://contoh.com/video.mp4 atau URL YouTube/TikTok",
   required: true,
   hint: "YouTube kena bot-check? Paste isi cookies.txt di bagian Cookies di bawah (lihat panduannya).",
 };
@@ -75,7 +75,7 @@ export const TOOLS: ToolDef[] = [
     desc: "Gabung beberapa video jadi satu (maks 4 sumber), auto-skala 9:16 + fade.",
     fields: [
       { key: "sources", label: "Daftar URL (satu per baris, maks 4)", type: "textarea", required: true,
-        placeholder: "http://127.0.0.1:8080/e2e-ujian.mp4\nhttp://127.0.0.1:8080/e2e-ujian.mp4" },
+        placeholder: "https://contoh.com/video.mp4\nhttps://contoh.com/video.mp4" },
       { key: "perdur", label: "Durasi per video (detik)", type: "number", default: "15" },
     ],
   },

@@ -1,14 +1,14 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import type { Job } from "@/lib/store";
+import { ICO, fmt } from "@/lib/ui";
 import { PRESETS, DEFAULT_PRESET } from "@/lib/captions";
 import { TOOL_BY_ID } from "@/lib/tools";
 import { HARGA, FAQ, CARA_KERJA } from "@/lib/site";
+import { useJobPolling } from "@/lib/use-job-polling";
 import JobPanel from "@/components/JobPanel";
-
-const ICO: Record<string, string> = { pending: "⏳", run: "⚙️", done: "✅", fail: "❌" };
 
 /** 8 fitur unggulan yang dipromosikan di landing — sisanya di /fitur. */
 const UNGGULAN = [
@@ -27,17 +27,14 @@ export default function Home() {
   const [preset, setPreset] = useState(DEFAULT_PRESET);
   const [jobs, setJobs] = useState<Job[]>([]);
   const [active, setActive] = useState<Job | null>(null);
+  const [watchId, setWatchId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const [greet, setGreet] = useState("Pagi");
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
     const h = new Date().getHours();
     setGreet(h < 4 ? "Malam" : h < 11 ? "Pagi" : h < 15 ? "Siang" : h < 18.5 ? "Sore" : "Malam");
-    return () => {
-      if (pollRef.current) clearInterval(pollRef.current);
-    };
   }, []);
 
   const refreshList = useCallback(async () => {
@@ -54,26 +51,23 @@ export default function Home() {
     refreshList();
   }, [refreshList]);
 
-  const watch = useCallback(
-    (id: string) => {
-      if (pollRef.current) clearInterval(pollRef.current);
-      pollRef.current = setInterval(async () => {
-        try {
-          const r = await fetch(`/api/jobs/${id}`, { cache: "no-store" });
-          if (!r.ok) return;
-          const j: Job = await r.json();
-          setActive(j);
-          if (j.status === "done" || j.status === "fail") {
-            if (pollRef.current) clearInterval(pollRef.current);
-            refreshList();
-          }
-        } catch {
-          /* polling error — coba lagi */
-        }
-      }, 1500);
+  /** Job yang di-watch selesai (done/fail) → refresh riwayat, sama seperti versi lama. */
+  const onJobFinished = useCallback(
+    (_job: Job) => {
+      void refreshList();
     },
     [refreshList]
   );
+
+  const { job: polledJob } = useJobPolling(watchId, {
+    onDone: onJobFinished,
+    onFail: onJobFinished,
+  });
+
+  // Tiap hasil poll → panel aktif (pengganti setActive(j) per tick di watch() lama).
+  useEffect(() => {
+    if (polledJob) setActive(polledJob);
+  }, [polledJob]);
 
   const submit = async () => {
     setErr("");
@@ -91,7 +85,7 @@ export default function Home() {
       const j = await r.json();
       if (!r.ok) throw new Error(j.error || "gagal membuat job");
       setActive(j);
-      watch(j.id);
+      setWatchId(j.id);
     } catch (e) {
       setErr(String((e as Error).message));
     } finally {
@@ -99,14 +93,15 @@ export default function Home() {
     }
   };
 
-  const fmt = (s?: number) =>
-    s == null ? "—" : `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padStart(2, "0")}`;
-
   const nLive = 17;
-  const showcase: Array<{ job: Job; idx: number }> = [];
-  for (const j of jobs) {
-    if (j.status === "done" && j.clips.length > 0) showcase.push({ job: j, idx: 0 });
-  }
+  // Job done berklip → promo showcase (memoized; hanya berubah saat riwayat berubah).
+  const showcase = useMemo(() => {
+    const arr: Array<{ job: Job; idx: number }> = [];
+    for (const j of jobs) {
+      if (j.status === "done" && j.clips.length > 0) arr.push({ job: j, idx: 0 });
+    }
+    return arr;
+  }, [jobs]);
 
   return (
     <>
@@ -342,7 +337,8 @@ export default function Home() {
                     .then((r) => r.json())
                     .then((x: Job) => {
                       setActive(x);
-                      if (x.status === "run" || x.status === "queued") watch(x.id);
+                      if (x.status === "run" || x.status === "queued") setWatchId(x.id);
+                      else setWatchId(null); // sudah selesai — matikan watcher lama (bila ada)
                       window.scrollTo({ top: 0, behavior: "smooth" });
                     });
                 }}

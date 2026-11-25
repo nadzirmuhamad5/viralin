@@ -1,22 +1,15 @@
 /** Kotak peralatan media bersama: sumber video, whisper, TTS, render klip, LLM & gambar gratis. */
 import { promises as fs } from "fs";
 import path from "path";
-import { createHash } from "crypto";
+import { createHash, randomBytes } from "crypto";
 import { run, tailErr } from "./exec";
 import { buildAss, type Word } from "./captions";
+import {
+  PY, DEPS, YTDLP, ENV, WHISPER_MODEL, WHISPER_LANG, UPLOAD_DIR, FONTS_DIR, ZAI_BIN,
+} from "./config";
+import { whisperdTranscribe, isWhisperdUnavailable, type WhisperInfo } from "./whisperd";
 
-export const PY = process.env.PYTHON || "python3";
-export const DEPS = "/home/z/my-project/.deps";
-export const YTDLP = path.join(DEPS, "bin", "yt-dlp");
-export const ENV = {
-  ...process.env,
-  HF_HOME: "/home/z/my-project/.cache/huggingface",
-  PYTHONPATH: DEPS,
-};
-export const WHISPER_MODEL = process.env.VL_WHISPER_MODEL || "small";
-export const WHISPER_LANG = process.env.VL_WHISPER_LANGUAGE || "id";
-export const UPLOAD_DIR = path.join(process.cwd(), "data", "uploads");
-export const FONTS_DIR = path.join(process.cwd(), "assets", "caption-fonts");
+export { PY, DEPS, YTDLP, ENV, WHISPER_MODEL, WHISPER_LANG, UPLOAD_DIR, FONTS_DIR };
 
 export type Seg = { start: number; end: number; text: string; words?: Word[] };
 
@@ -30,6 +23,7 @@ async function cookieArgs(
   let p: string;
   if (cookies.includes("\n")) {
     // paste mentah → simpan sebagai file; nama stabil dari hash isinya (hindari duplikat)
+    await fs.mkdir(UPLOAD_DIR, { recursive: true }); // dulu ENOENT bila belum ada upload sama sekali
     const name =
       "paste-" + createHash("sha1").update(cookies).digest("hex").slice(0, 12) + ".txt";
     p = path.join(UPLOAD_DIR, name);
@@ -141,21 +135,37 @@ export async function extractAudio(src: string, dir: string, seconds?: number): 
   return wav;
 }
 
-/** Transkripsi whisper → segmen + kata ber-timestamp. */
+/** Ringkas hasil transkripsi ke log. */
+function logTranscribeInfo(log: (l: string) => void, info: WhisperInfo): void {
+  const nWords = info.segments.reduce((a, s) => a + (s.words?.length ?? 0), 0);
+  log(`[whisper] bahasa=${info.language} · ${info.segments.length} segmen · ${nWords} kata`);
+}
+
+/** Transkripsi whisper → segmen + kata ber-timestamp.
+ *  Jalur cepat: resident worker (model dimuat sekali per proses, hemat 3–6s per panggilan).
+ *  Bila worker tak tersedia → fallback ke spawn per-proses (worker/transcribe.py). */
 export async function transcribe(
   wav: string,
   dir: string,
   log: (l: string) => void
-): Promise<{ lang: string; duration: number; segments: Seg[] }> {
+): Promise<{ language: string; duration: number; segments: Seg[] }> {
+  log(`[whisper] transkripsi dimulai (model ${WHISPER_MODEL})…`);
+  try {
+    const info = await whisperdTranscribe(wav, (l) => l.startsWith("[whisper]") && log(l));
+    logTranscribeInfo(log, info);
+    return info;
+  } catch (e) {
+    if (!isWhisperdUnavailable(e)) throw e; // error transkripsi murni — jangan diulang
+    log("[whisper] resident worker tak tersedia → fallback spawn per-proses");
+  }
   const worker = path.join(process.cwd(), "worker", "transcribe.py");
   log(`[whisper] memuat model ${WHISPER_MODEL} & transkripsi…`);
   const r = await run([
     PY, worker, wav, "--model", WHISPER_MODEL, "--language", WHISPER_LANG, "--threads", "2",
   ], { env: ENV, timeout: 900_000 });
   if (r.code !== 0) throw new Error("whisper gagal: " + tailErr(r.stderr));
-  const info = JSON.parse(r.stdout) as { language: string; duration: number; segments: Seg[] };
-  const nWords = info.segments.reduce((a, s) => a + (s.words?.length ?? 0), 0);
-  log(`[whisper] bahasa=${info.language} · ${info.segments.length} segmen · ${nWords} kata`);
+  const info = JSON.parse(r.stdout) as WhisperInfo;
+  logTranscribeInfo(log, info);
   return info;
 }
 
@@ -178,42 +188,41 @@ export async function ttsSynth(
   if (r.code !== 0) throw new Error("edge-tts gagal: " + tailErr(r.stderr));
 }
 
-/** Render klip 9:16 + caption karaoke ala klipers (dipakai klip-ai & atur-manual & konten). */
+/** Render klip 9:16 + caption karaoke ala klipers (dipakai klip-ai & atur-manual).
+ *  File .ass ditulis SEBELUM render dan DIHAPUS sesudahnya — dulu ada race:
+ *  setTimeout hapus 60 detik bisa menyambar saat render masih >60s (caption hilang). */
 export async function renderKlip(opts: {
   src: string; out: string; start: number; end: number;
   words?: Word[]; presetId: string; vertical?: boolean; positionY?: number;
 }): Promise<void> {
-  const vf =
-    (opts.vertical !== false ? "crop=w='trunc(min(iw,ih*9/16)/2)*2':h=ih," : "") +
-    "scale=540:960" +
-    (opts.words?.length
-      ? `,subtitles=filename='${await writeAss(opts, process.cwd())}':fontsdir='${FONTS_DIR}'`
-      : "");
-  const r = await run([
-    "ffmpeg", "-y", "-hide_banner", "-ss", String(opts.start), "-i", opts.src,
-    "-t", String(Math.max(opts.end - opts.start, 1)),
-    "-vf", vf, "-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
-    "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart", opts.out,
-  ]);
-  if (r.code !== 0) throw new Error("render gagal: " + tailErr(r.stderr));
-}
-
-async function writeAss(
-  opts: { words: Word[]; start: number; end: number; presetId: string; positionY?: number },
-  dir: string
-): Promise<string> {
-  const assPath = path.join(dir, "data", "tmp-ass-" + Math.random().toString(36).slice(2, 8) + ".ass");
-  await fs.writeFile(
-    assPath,
-    buildAss(opts.words, {
-      presetId: opts.presetId,
-      clipStart: opts.start,
-      clipEnd: opts.end,
-      positionY: opts.positionY,
-    })
-  );
-  setTimeout(() => void fs.rm(assPath, { force: true }), 60_000);
-  return assPath;
+  let assPath: string | null = null;
+  if (opts.words?.length) {
+    assPath = path.join(path.dirname(opts.out), `cap-${randomBytes(3).toString("hex")}.ass`);
+    await fs.writeFile(
+      assPath,
+      buildAss(opts.words, {
+        presetId: opts.presetId,
+        clipStart: opts.start,
+        clipEnd: opts.end,
+        positionY: opts.positionY,
+      })
+    );
+  }
+  try {
+    const vf =
+      (opts.vertical !== false ? "crop=w='trunc(min(iw,ih*9/16)/2)*2':h=ih," : "") +
+      "scale=540:960" +
+      (assPath ? `,subtitles=filename='${assPath}':fontsdir='${FONTS_DIR}'` : "");
+    const r = await run([
+      "ffmpeg", "-y", "-hide_banner", "-ss", String(opts.start), "-i", opts.src,
+      "-t", String(Math.max(opts.end - opts.start, 1)),
+      "-vf", vf, "-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
+      "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart", opts.out,
+    ]);
+    if (r.code !== 0) throw new Error("render gagal: " + tailErr(r.stderr));
+  } finally {
+    if (assPath) await fs.rm(assPath, { force: true });
+  }
 }
 
 /* ── AI gratis via CLI z-ai (chat GLM, image gen) ─────────────────────── */
@@ -221,7 +230,7 @@ async function writeAss(
 export async function zaiChat(system: string, prompt: string, log?: (l: string) => void): Promise<string> {
   const out = path.join("/tmp", "vl-llm-" + Math.random().toString(36).slice(2, 8) + ".json");
   log?.("[ai] memanggil LLM gratis (z-ai)…");
-  const r = await run(["z-ai", "chat", "-p", prompt, ...(system ? ["-s", system] : []), "-o", out], {
+  const r = await run([ZAI_BIN, "chat", "-p", prompt, ...(system ? ["-s", system] : []), "-o", out], {
     timeout: 240_000,
   });
   if (r.code !== 0) throw new Error("z-ai chat gagal: " + tailErr(r.stderr));
@@ -248,7 +257,7 @@ export function extractJson<T>(s: string): T {
 
 export async function zaiImage(prompt: string, out: string, log?: (l: string) => void): Promise<void> {
   log?.("[ai] membuat gambar (z-ai image)…");
-  const r = await run(["z-ai", "image", "-p", prompt, "-o", out], { timeout: 240_000 });
+  const r = await run([ZAI_BIN, "image", "-p", prompt, "-o", out], { timeout: 240_000 });
   if (r.code !== 0 || !(await fs.stat(out).then(() => true).catch(() => false))) {
     throw new Error("z-ai image gagal: " + tailErr(r.stderr));
   }

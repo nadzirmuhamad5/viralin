@@ -2,15 +2,11 @@
 
 import Link from "next/link";
 import type { Job } from "@/lib/store";
+import { ICO, MB, fmt } from "@/lib/ui";
 
-const ICO: Record<string, string> = { pending: "⏳", run: "⚙️", done: "✅", fail: "❌" };
 const FILE_ICO: Record<string, string> = {
   video: "🎬", image: "🖼️", subtitle: "📝", audio: "🎵",
 };
-
-const MB = (b: number) => (b / 1e6).toFixed(2) + " MB";
-const fmt = (s?: number) =>
-  s == null ? "—" : `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padStart(2, "0")}`;
 
 /** Panel hasil job: tahapan, log live, klip/video, file, teks — taxidipakai semua halaman. */
 export default function JobPanel({ job }: { job: Job }) {

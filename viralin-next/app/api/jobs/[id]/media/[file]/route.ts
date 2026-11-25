@@ -12,6 +12,9 @@ const MIME: Record<string, string> = {
   ".txt": "text/plain; charset=utf-8", ".ass": "text/plain; charset=utf-8",
 };
 
+// gambar hasil job boleh di-cache browser; sisanya dinamis → no-store
+const CACHEABLE = new Set([".jpg", ".jpeg", ".png", ".webp"]);
+
 export async function GET(
   req: Request,
   { params }: { params: Promise<{ id: string; file: string }> }
@@ -22,18 +25,30 @@ export async function GET(
 
   const safe = path.basename(decodeURIComponent(file));
   const fp = path.join(DATA, id, safe);
-  if (!fp.startsWith(path.join(DATA, id)) || !(await fs.stat(fp).catch(() => null))) {
+  // satu fs.stat dipakai untuk cek keberadaan + ukuran file
+  const st = await fs.stat(fp).catch(() => null);
+  if (!fp.startsWith(path.join(DATA, id)) || !st) {
     return new Response("file tidak ditemukan", { status: 404 });
   }
-  const size = (await fs.stat(fp)).size;
-  const type = MIME[path.extname(safe).toLowerCase()] || "application/octet-stream";
+  const size = st.size;
+  const ext = path.extname(safe).toLowerCase();
+  const type = MIME[ext] || "application/octet-stream";
+  const cacheControl = CACHEABLE.has(ext) ? "public, max-age=3600" : "no-store";
 
   const range = req.headers.get("range");
   if (range) {
     const m = /bytes=(\d*)-(\d*)/.exec(range);
     if (m) {
-      const start = m[1] ? parseInt(m[1], 10) : 0;
-      const end = m[2] ? Math.min(parseInt(m[2], 10), size - 1) : size - 1;
+      let start: number;
+      let end: number;
+      if (!m[1] && m[2]) {
+        // suffix range "bytes=-N" → N byte terakhir
+        start = Math.max(size - parseInt(m[2], 10), 0);
+        end = size - 1;
+      } else {
+        start = m[1] ? parseInt(m[1], 10) : 0;
+        end = m[2] ? Math.min(parseInt(m[2], 10), size - 1) : size - 1;
+      }
       if (start >= size || start > end) {
         return new Response(null, { status: 416, headers: { "Content-Range": `bytes */${size}` } });
       }
@@ -45,7 +60,7 @@ export async function GET(
           "Content-Length": String(end - start + 1),
           "Content-Range": `bytes ${start}-${end}/${size}`,
           "Accept-Ranges": "bytes",
-          "Cache-Control": "no-store",
+          "Cache-Control": cacheControl,
         },
       });
     }
@@ -56,7 +71,7 @@ export async function GET(
       "Content-Type": type,
       "Content-Length": String(size),
       "Accept-Ranges": "bytes",
-      "Cache-Control": "no-store",
+      "Cache-Control": cacheControl,
     },
   });
 }

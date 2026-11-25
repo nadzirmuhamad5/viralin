@@ -1,25 +1,12 @@
-import { execFile } from "child_process";
 import { promises as fs } from "fs";
 import path from "path";
 import { randomUUID } from "crypto";
 import { DATA, jobs, persist, type Clip, type Job, type Stage } from "./store";
 import { buildAss, DEFAULT_PRESET, type Word } from "./captions";
 import { runTool } from "./toolrun";
-import { ytdlpFetch } from "./mediakit";
-
-const PY = process.env.PYTHON || "python3";
-const DEPS = "/home/z/my-project/.deps";
-const YTDLP = path.join(DEPS, "bin", "yt-dlp");
-const WORKER = path.join(process.cwd(), "worker", "transcribe.py");
-const FONTS_DIR = path.join(process.cwd(), "assets", "caption-fonts");
-const WHISPER_MODEL = process.env.VL_WHISPER_MODEL || "small";
-const WHISPER_LANG = process.env.VL_WHISPER_LANGUAGE || "id"; // produk fokus Indonesia; auto sering salah deteksi TTS
-const MAX_SECONDS = Number(process.env.VL_MAX_SECONDS || 900); // 15 menit
-const ENV = {
-  ...process.env,
-  HF_HOME: "/home/z/my-project/.cache/huggingface",
-  PYTHONPATH: DEPS,
-};
+import { ytdlpFetch, transcribe, type Seg } from "./mediakit";
+import { run, tailErr } from "./exec";
+import { FONTS_DIR, MAX_SECONDS } from "./config";
 
 const STAGES: Array<[string, string]> = [
   ["download", "⬇️ yt-dlp — unduh video"],
@@ -29,45 +16,8 @@ const STAGES: Array<[string, string]> = [
   ["render", "🎬 ffmpeg — render klip 9:16 + caption"],
 ];
 
-function run(
-  cmd: string[],
-  opts: { env?: NodeJS.ProcessEnv; onLine?: (l: string) => void } = {}
-): Promise<{ code: number; stdout: string; stderr: string }> {
-  return new Promise((resolve, reject) => {
-    const p = execFile(
-      cmd[0],
-      cmd.slice(1),
-      { maxBuffer: 64 << 20, timeout: 600_000, env: opts.env ?? process.env },
-      (err, stdout, stderr) => {
-        if (err && (err as NodeJS.Process & { killed?: boolean }).killed) {
-          reject(new Error(`timeout: ${cmd[0]}`));
-        } else {
-          resolve({
-            code: err ? ((err as { code?: number }).code ?? 1) : 0,
-            stdout: String(stdout),
-            stderr: String(stderr),
-          });
-        }
-      }
-    );
-    if (opts.onLine) {
-      const pump = (d: unknown) =>
-        String(d)
-          .split(/[\r\n]+/)
-          .forEach((l) => l.trim() && opts.onLine!(l));
-      p.stdout?.on("data", pump);
-      p.stderr?.on("data", pump);
-    }
-  });
-}
-
 const r1 = (n: number) => Math.round(n * 10) / 10;
 const r2 = (n: number) => Math.round(n * 100) / 100;
-
-function tailErr(s: string): string {
-  const lines = s.split(/\r?\n/).filter((l) => l.trim());
-  return lines.slice(-3).join(" · ").slice(0, 300) || "(kosong)";
-}
 
 const TOOL_STAGES: Array<[string, string]> = [
   ["sumber", "📥 siapkan sumber (unduh/upload)"],
@@ -118,10 +68,12 @@ function pushLog(job: Job, line: string, persistToo = false) {
   if (persistToo) void persist(job);
 }
 
+/** Deteksi cut scene. Video di-downscale ke 160×90 dulu — skor scene cukup akurat
+ *  untuk pemilihan momen, sementara CPU decode turun 20–50× dibanding resolusi penuh. */
 async function detectScenes(src: string, dur: number, job: Job): Promise<number[]> {
   const r = await run([
-    "ffmpeg", "-hide_banner", "-i", src,
-    "-vf", "select='gt(scene,0.3)',showinfo", "-f", "null", "-",
+    "ffmpeg", "-hide_banner", "-an", "-i", src,
+    "-vf", "scale=160:90,select='gt(scene,0.3)',showinfo", "-f", "null", "-",
   ]);
   const ts = [...r.stderr.matchAll(/pts_time:([0-9.]+)/g)].map((m) => parseFloat(m[1]));
   const out = [...new Set(ts.filter((t) => 0 < t && t < dur))].sort((a, b) => a - b);
@@ -129,7 +81,6 @@ async function detectScenes(src: string, dur: number, job: Job): Promise<number[
   return [0, ...out, dur];
 }
 
-type Seg = { start: number; end: number; text: string; words?: Word[] };
 type Proposal = { start: number; end: number; score: number };
 
 function pickProposals(segs: Seg[], cuts: number[], dur: number): Proposal[] {
@@ -274,26 +225,18 @@ export async function runJob(job: Job): Promise<void> {
     pushLog(job, `[probe] durasi ${r1(dur)}s`, true);
     setStage(job, "probe", "done");
 
-    // ── 3. transkrip (faster-whisper) ─────────────────────────────────
+    // ── 3. transkrip (faster-whisper, resident worker + fallback) ─────
     curStage = "transcribe";
     setStage(job, "transcribe", "run");
     const wav = path.join(dir, "audio.wav");
     const ax = await run(["ffmpeg", "-y", "-i", src, "-vn", "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le", wav]);
     if (ax.code !== 0) throw new Error("ekstrak audio gagal: " + tailErr(ax.stderr));
-    const tr = await run(
-      [PY, WORKER, wav, "--model", WHISPER_MODEL, "--language", WHISPER_LANG, "--threads", "2"],
-      { env: ENV, onLine: (l) => l.startsWith("[whisper]") && pushLog(job, l) }
-    );
-    if (tr.code !== 0) throw new Error("whisper gagal: " + tailErr(tr.stderr));
-    const info = JSON.parse(tr.stdout.trim().split("\n").pop() || "{}") as {
-      language?: string; segments?: Seg[];
-    };
-    const segs: Seg[] = info.segments || [];
+    const info = await transcribe(wav, dir, (l) => pushLog(job, l));
+    const segs: Seg[] = info.segments;
     job.lang = info.language;
     const nWords = allWords(segs).length;
-    pushLog(job, `[whisper] bahasa=${info.language} · ${segs.length} segmen · ${nWords} kata ber-timestamp`, true);
-    if (!segs.length) pushLog(job, "⚠️ tidak ada ucapan terdeteksi — momen dipilih dari scene");
-    if (!nWords) pushLog(job, "⚠️ word timestamp kosong — klip dirender tanpa caption");
+    if (!segs.length) pushLog(job, "⚠️ tidak ada ucapan terdeteksi — momen dipilih dari scene", true);
+    if (!nWords) pushLog(job, "⚠️ word timestamp kosong — klip dirender tanpa caption", true);
     setStage(job, "transcribe", "done");
 
     // ── 4. analisis & pilih momen ─────────────────────────────────────

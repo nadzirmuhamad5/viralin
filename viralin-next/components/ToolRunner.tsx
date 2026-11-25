@@ -1,10 +1,14 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useState } from "react";
 import type { Job } from "@/lib/store";
 import { PRESETS, DEFAULT_PRESET } from "@/lib/captions";
 import type { ToolDef, ToolField } from "@/lib/tools";
+import { useJobPolling } from "@/lib/use-job-polling";
 import JobPanel from "./JobPanel";
+
+/** Respons sukses POST /api/upload. */
+type UploadResponse = { ref: string; uploadId: string; name: string; bytes: number };
 
 /** Form + submit + polling untuk SATU tool — dipakai di halaman /fitur/[slug]. */
 export default function ToolRunner({ tool }: { tool: ToolDef }) {
@@ -13,38 +17,22 @@ export default function ToolRunner({ tool }: { tool: ToolDef }) {
     for (const f of tool.fields) init[f.key] = f.default || "";
     return init;
   });
-  const [job, setJob] = useState<Job | null>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const [cookies, setCookies] = useState<{ id: string; name: string } | null>(null);
   const [cookiesText, setCookiesText] = useState("");
   const hasSource = tool.fields.some((f) => f.key === "source");
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  useEffect(() => {
-    return () => {
-      if (pollRef.current) clearInterval(pollRef.current);
-    };
-  }, []);
+  // Job dari respons POST disimpan di `seed` supaya panel langsung tampil tanpa
+  // menunggu poll pertama; hasil poll terbaru (via hook) yang lebih baru menang.
+  const [seed, setSeed] = useState<Job | null>(null);
+  const [watchId, setWatchId] = useState<string | null>(null);
+  const { job: polledJob } = useJobPolling(watchId);
+  const job = polledJob ?? seed;
 
-  const watch = useCallback((id: string) => {
-    if (pollRef.current) clearInterval(pollRef.current);
-    pollRef.current = setInterval(async () => {
-      try {
-        const r = await fetch(`/api/jobs/${id}`, { cache: "no-store" });
-        if (!r.ok) return;
-        const j: Job = await r.json();
-        setJob(j);
-        if (j.status === "done" || j.status === "fail") {
-          if (pollRef.current) clearInterval(pollRef.current);
-        }
-      } catch {
-        /* dev server restart — coba lagi */
-      }
-    }, 1500);
-  }, []);
-
-  const uploadField = async (key: string, f: File) => {
+  /** Upload ke POST /api/upload — dipakai untuk field source (ambil `ref`)
+   *  dan file cookies (ambil `uploadId`). Beda hanya di penanganan responsnya. */
+  const upload = async (f: File, apply: (res: UploadResponse) => void) => {
     setErr("");
     const fd = new FormData();
     fd.append("file", f);
@@ -52,21 +40,7 @@ export default function ToolRunner({ tool }: { tool: ToolDef }) {
       const r = await fetch("/api/upload", { method: "POST", body: fd });
       const j = await r.json();
       if (!r.ok) throw new Error(j.error || "upload gagal");
-      setFormVals((v) => ({ ...v, [key]: j.ref }));
-    } catch (e) {
-      setErr(String((e as Error).message));
-    }
-  };
-
-  const uploadCookies = async (f: File) => {
-    setErr("");
-    const fd = new FormData();
-    fd.append("file", f);
-    try {
-      const r = await fetch("/api/upload", { method: "POST", body: fd });
-      const j = await r.json();
-      if (!r.ok) throw new Error(j.error || "upload gagal");
-      setCookies({ id: j.uploadId, name: f.name });
+      apply(j);
     } catch (e) {
       setErr(String((e as Error).message));
     }
@@ -96,8 +70,8 @@ export default function ToolRunner({ tool }: { tool: ToolDef }) {
       });
       const j = await r.json();
       if (!r.ok) throw new Error(j.error || "gagal membuat job");
-      setJob(j);
-      watch(j.id);
+      setSeed(j);
+      setWatchId(j.id);
     } catch (e) {
       setErr(String((e as Error).message));
     } finally {
@@ -149,7 +123,10 @@ export default function ToolRunner({ tool }: { tool: ToolDef }) {
         <input
           type="file"
           accept="video/*,image/*"
-          onChange={(e) => e.target.files?.[0] && uploadField(f.key, e.target.files[0])}
+          onChange={(e) => {
+            const file = e.target.files?.[0];
+            if (file) upload(file, (j) => setFormVals((v) => ({ ...v, [f.key]: j.ref })));
+          }}
         />
       );
     }
@@ -188,7 +165,10 @@ export default function ToolRunner({ tool }: { tool: ToolDef }) {
               <input
                 type="file"
                 accept=".txt"
-                onChange={(e) => e.target.files?.[0] && uploadCookies(e.target.files[0])}
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (file) upload(file, (j) => setCookies({ id: j.uploadId, name: file.name }));
+                }}
               />
               <textarea
                 rows={4}
