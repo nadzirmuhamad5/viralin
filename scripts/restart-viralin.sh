@@ -48,6 +48,14 @@ if [ -x "$BASE/pot-provider/deno" ] && ! curl -s --max-time 3 http://127.0.0.1:4
     >> "$LOGDIR/pot-server.log" 2>&1 &)
 fi
 
+# 1d. Metadata riwayat job dari backup git (backup-data/jobs — di-track repo).
+#     Media/video tidak ikut (re-render kalau perlu); mtime fresh → tak dibuang TTL.
+if [ ! -d "$APP/data/jobs" ] && [ -d "$APP/backup-data/jobs" ] && ls "$APP"/backup-data/jobs/*.json >/dev/null 2>&1; then
+  echo "[restart] memulihkan metadata riwayat dari backup-data/…"
+  mkdir -p "$APP/data/jobs"
+  cp "$APP"/backup-data/jobs/*.json "$APP/data/jobs/"
+fi
+
 # 2. Build production bila belum ada / diminta
 if [ ! -f "$APP/.next/BUILD_ID" ] || [ "${REBUILD:-0}" = "1" ]; then
   echo "[restart] build production…"
