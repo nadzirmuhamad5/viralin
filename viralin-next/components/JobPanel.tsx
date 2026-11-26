@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { Download } from "lucide-react";
 import type { Job } from "@/lib/store";
 import { ICO, MB, fmt } from "@/lib/ui";
 
@@ -44,7 +45,7 @@ export default function JobPanel({ job }: { job: Job }) {
                 href={`/api/jobs/${job.id}/media/${c.file}`}
                 download={c.file}
               >
-                ⬇️ Unduh klip
+                <Download size={14} aria-hidden="true" /> Unduh klip
               </a>
             </div>
           ))}
@@ -55,15 +56,17 @@ export default function JobPanel({ job }: { job: Job }) {
       {job.files && job.files.length > 0 && (
         <div className="files">
           {job.files.map((f) => (
-            <div className="frow" key={f.file}>
+            <a
+              className="frow"
+              key={f.file}
+              href={`/api/jobs/${job.id}/media/${f.file}`}
+              download={f.file}
+            >
               <span>{FILE_ICO[f.kind] || "📄"}</span>
               <span className="fhandle">{f.file}</span>
               <span className="flabel">{f.label}</span>
-              <a className="fdown" href={`/api/jobs/${job.id}/media/${f.file}`} download={f.file} title="Download">⬇️</a>
-              {f.link && (
-                <a className="fdrive" href={f.link} target="_blank" rel="noreferrer" title="Buka di Google Drive">☁️ Drive</a>
-              )}
-            </div>
+              <span className="fdown"><Download size={14} aria-hidden="true" /></span>
+            </a>
           ))}
         </div>
       )}

@@ -128,9 +128,16 @@ function groupLines(words: Word[], maxWords: number): Line[] {
 
 export function buildAss(
   words: Word[],
-  opts: { presetId?: string; clipStart?: number; clipEnd?: number; positionY?: number } = {}
+  opts: {
+    presetId?: string; clipStart?: number; clipEnd?: number; positionY?: number;
+    /** override opsional (additive — default tetap perilaku preset lama) */
+    maxWords?: number; highlightColor?: string; fontSize?: number;
+  } = {}
 ): string {
   const preset = PRESETS[opts.presetId || DEFAULT_PRESET] || PRESETS[DEFAULT_PRESET];
+  const maxWords = opts.maxWords ?? preset.maxWords;
+  const fontSize = opts.fontSize ?? preset.fontSize;
+  const highlight = opts.highlightColor ?? preset.highlightColor;
   const c0 = opts.clipStart ?? 0;
   const c1 = opts.clipEnd ?? Number.MAX_SAFE_INTEGER;
   const mv = opts.positionY ?? preset.marginV;
@@ -151,12 +158,13 @@ export function buildAss(
     "ScriptType: v4.00+",
     "PlayResX: 540",
     "PlayResY: 960",
-    "WrapStyle: 2",
+    // 0 = smart wrap: baris panjang pindah ke bawah, bukan overflow terpotong di tepi
+    "WrapStyle: 0",
     "ScaledBorderAndShadow: yes",
     "",
     "[V4+ Styles]",
     "Format: Name,Fontname,Fontsize,PrimaryColour,SecondaryColour,OutlineColour,BackColour,Bold,Italic,Underline,StrikeOut,ScaleX,ScaleY,Spacing,Angle,BorderStyle,Outline,Shadow,Alignment,MarginL,MarginR,MarginV,Encoding",
-    `Style: Cap,${preset.fontFamily},${preset.fontSize},${hexToAss(preset.highlightColor)},${hexToAss(
+    `Style: Cap,${preset.fontFamily},${fontSize},${hexToAss(highlight)},${hexToAss(
       preset.primaryColor
     )},${hexToAss(preset.outlineColor)},&H64000000,-1,0,0,0,100,100,0,0,${
       preset.box ? 3 : 1
@@ -167,7 +175,7 @@ export function buildAss(
   ];
 
   const events: string[] = [];
-  for (const line of groupLines(inWindow, preset.maxWords)) {
+  for (const line of groupLines(inWindow, maxWords)) {
     const first = line.words[0];
     const last = line.words[line.words.length - 1];
     const start = Math.max(0, first.start - 0.03);
