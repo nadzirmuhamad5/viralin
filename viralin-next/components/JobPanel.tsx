@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { Download } from "lucide-react";
 import type { Job } from "@/lib/store";
 import { ICO, MB, fmt } from "@/lib/ui";
 
@@ -44,7 +45,7 @@ export default function JobPanel({ job }: { job: Job }) {
                 href={`/api/jobs/${job.id}/media/${c.file}`}
                 download={c.file}
               >
-                ⬇️ Unduh klip
+                <Download size={14} aria-hidden="true" /> Unduh klip
               </a>
             </div>
           ))}
@@ -64,7 +65,7 @@ export default function JobPanel({ job }: { job: Job }) {
               <span>{FILE_ICO[f.kind] || "📄"}</span>
               <span className="fhandle">{f.file}</span>
               <span className="flabel">{f.label}</span>
-              <span className="fdown">⬇️</span>
+              <span className="fdown"><Download size={14} aria-hidden="true" /></span>
             </a>
           ))}
         </div>

@@ -163,6 +163,25 @@ export const TOOLS: ToolDef[] = [
     ],
   },
   {
+    id: "viral-konten", name: "Viral Konten Studio", icon: "⚡", group: "AI Generatif", badge: "NEW", live: true,
+    desc: "Fakta Shock / Tips Kilat / Mitos vs Fakta → short motion-graphics 1080x1920 30fps: pop spring physics, progress bar, karaoke, safe-zone mobile terkunci + subtitle SRT. Standar motion terkunci.",
+    fields: [
+      { key: "topik", label: "Topik / niche", type: "text", required: true,
+        placeholder: "fakta unik kopi gula aren" },
+      { key: "gaya", label: "Format", type: "select", default: "fakta",
+        options: [
+          { value: "fakta", label: "Fakta Shock" },
+          { value: "tips", label: "Tips Kilat" },
+          { value: "mitos", label: "Mitos vs Fakta" },
+        ] },
+      { key: "voice", label: "Suara", type: "select", default: "id-ID-ArdiNeural",
+        options: [
+          { value: "id-ID-ArdiNeural", label: "Ardi — Pria 🇮🇩" },
+          { value: "id-ID-GadisNeural", label: "Gadis — Wanita 🇮🇩" },
+        ] },
+    ],
+  },
+  {
     id: "ai-image", name: "Klipers AI", icon: "🎨", group: "AI Generatif", badge: "NEW", live: true,
     desc: "Generator gambar AI gratis (pakai z-ai) — thumbnail, background, aset konten.",
     fields: [
