@@ -22,7 +22,7 @@ export type Clip = {
   preset?: string;
 };
 
-export type JobFile = { file: string; label: string; kind: "video" | "image" | "subtitle" | "audio" };
+export type JobFile = { file: string; label: string; kind: "video" | "image" | "subtitle" | "audio"; link?: string };
 export type JobText = { label: string; body: string };
 
 export type Job = {

@@ -170,7 +170,9 @@ const Karaoke: React.FC<{ sc: ViralScene; words: ViralKontenProps["words"]; high
       flexWrap: "wrap", justifyContent: "center", gap: "2px 10px",
     }}>
       {win.map((w, k) => {
-        const pop = spring({ frame: frame - (k - off) * 2, fps, config: { damping: 12, stiffness: 190, mass: 0.4 } });
+        // FIX kedat-kedut: pop dikunci ke waktu MULAI kata absolut (bukan offset window)
+        // → tidak ada loncatan fase 2-frame saat window geser
+        const pop = spring({ frame: frame - Math.max(0, Math.round((w.s - sc.start) * fps)), fps, config: { damping: 12, stiffness: 190, mass: 0.4 } });
         const isAct = k === off;
         const done = k < off;
         return (
@@ -205,7 +207,10 @@ const PointScene: React.FC<{ sc: ViralScene; idx: number; total: number; durF: n
       if (inScene[i].e <= t) act = i;
     }
     const actStartF = act >= 0 ? Math.max(0, Math.round((inScene[act].s - sc.start) * fps)) : 0;
-    const bump = 0.026 * Math.max(0, 1 - (frame - actStartF) / 7); // denyut cepat lalu meluruh
+    // FIX kedat-kedut: denyut dgn envelope sin (naik-turun mulus, tanpa lonjakan instan),
+    // amplitude setengah — bg tidak lagi bersawtooth tiap kata
+    const dt = frame - actStartF;
+    const bump = dt >= 0 && dt < 14 ? 0.013 * Math.sin((dt / 14) * Math.PI) : 0;
     // emoji chip kanan-atas — muncul dengan bounce + bob pelan
     const emo = rage ? RAGE_EMOJIS[idx % RAGE_EMOJIS.length] : emojiFor(sc.text);
     const emoS = spring({ frame: frame - 6, fps, config: { damping: 9, stiffness: 190, mass: 0.45 } });
