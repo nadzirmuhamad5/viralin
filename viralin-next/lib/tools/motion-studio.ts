@@ -52,7 +52,7 @@ export async function run(ctx: ToolCtx): Promise<void> {
         : "") +
       "Balas HANYA JSON valid tanpa penjelasan: {\"judul\":\"HOOK KAPITAL maks 40 karakter\", " +
       "\"n\":\"1 kalimat narasi pembuka yg menjelaskan hook (yg dibaca voice-over)\", " +
-      "\"bullets\":[{\"t\":\"poin pendek maks 60 karakter\",\"anim\":\"money\",\"img\":\"deskripsi visual 2-5 kata\"," +
+      "\"bullets\":[{\"t\":\"poin pendek maks 60 karakter TANPA titik di akhir\",\"anim\":\"money\",\"img\":\"deskripsi visual 2-5 kata\"," +
       "\"n\":\"1-2 kalimat narasi detail poin ini (yg dibaca voice-over)\"}], \"cta\":\"CTA maks 30 karakter\", " +
       "\"cn\":\"1 kalimat ajakan penutup yg enak dibaca voice-over\"}. " +
       "Buat 4-8 poin. Untuk TIAP poin pilih anim yang paling cocok dengan isinya, salah satu dari: " +

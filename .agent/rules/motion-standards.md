@@ -125,3 +125,29 @@ export const MOTION_STANDARDS = {
 Ketika membuat komposisi baru: **baca dulu skill relevan** (minimal
 `skills/skills/remotion-best-practices/SKILL.md` dan
 `remotion-motion-graphics-skill/skills/motion-graphics/SKILL.md`), baru tulis kode.
+
+## 8. Hukum desain bang-motion (skill terpasang di `.agent/skills/bang-motion`)
+
+Skill `bangtutorial/bang-motion` v1.19 (MIT) terpasang utuh — 25 skill kini.
+Untuk SEMUA motion graphic (komposisi Remotion ATAU HTML+GSAP), hukum desainnya
+mengikat di atas gaya apa pun:
+
+1. **Ini video, bukan slide** — adegan berganti karena dunia/kamera bergerak,
+   bukan section yang di-fade. Uji mekanisnya di SKILL.md "Larangan struktural"
+   (hitung `<section`/`class="scene"`, tingkat teks per adegan, gerak tiap detik).
+2. **Deterministik atau mati** — nol `Date.now()`/`Math.random()` di jalur
+   render; semua visual fungsi murni waktu (di Remotion: fungsi murni `frame`,
+   random pakai helper `rnd(i)` berbasis sin seperti di MotionStudio/ViralKonten).
+3. **Gaya lahir dari tema** — style brief (palet dari brand/tema, font
+   berkarakter, bahasa gerak latar `techniques.md` §7c, permukaan latar §7d
+   ≥2 lapis, satu tanda tangan gerak, satu momen istimewa) ditulis SEBELUM
+   kode; jangan salin kulit starter/referensi/proyek sebelumnya.
+4. **Teks hidup, latar tunduk** — sentence case bobot 500-600 (kapital-tebal
+   hanya satu adegan penekanan, mis. hook), tanpa titik otomatis di akhir
+   kalimat pendek, ukuran/arah/posisi teks BERGANTIAN antar adegan (MotionStudio
+   melakukannya lewat 3 varian layout BulletScene per idx%3), kantong teks
+   kontras (luminance ≤25% atau ≥80%), glow hanya pada objek — judul bersih.
+5. **Verifikasi visual per frame kunci** — contact sheet detik-detik kunci
+   (ffmpeg select + tile, atau `scripts/snap.mjs` milik skill), bukan render
+   penuh; menu gaya: `bang-motion/references/techniques.md`, jebakan umum:
+   `bang-motion/references/anti-ppt.md`.

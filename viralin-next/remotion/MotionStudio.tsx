@@ -2,6 +2,11 @@
  *  Animasi SESUAI ISI: tiap poin dapat arketipe visual sendiri (21 arketipe) +,
  *  di mode AI/Berita, latar ILUSTRASI AI per poin (img) — jadi scene benar-benar
  *  menggambarkan topik yang dibicarakan, bukan sekadar ikon generik.
+ *  Standar desain mengikuti HUKUM bang-motion (skill .agent/skills/bang-motion):
+ *  adegan hidup & tak kembar (3 varian layout berputar), latar per segmen
+ *  bernapas (blob + bentuk berputar + sapuan cahaya), teks tanpa titik otomatis,
+ *  counter tabular-nums, dan DETERMINISTIK penuh (fungsi murni frame — tanpa
+ *  Math.random/Date.now) sehingga render frame-by-frame identik.
  *  Durasi tiap bagian diatur dari form (hookdur/bulletdur/ctadur, detik) — dengan
  *  NARASI (Edge TTS) durasi tiap bagian mengikuti panjang narasinya (p.durs dari
  *  server) dan detailnya muncul sebagai CAPTION KARAOKE sinkron suara (p.words
@@ -216,7 +221,7 @@ const SceneIcon: React.FC<{ a: AnimId; text: string; accent: string; chip: strin
         <circle r={56} fill={chip} stroke={accent} strokeWidth={9} strokeDasharray={C} strokeDashoffset={C * (1 - p)}
           transform="rotate(-90)" strokeLinecap="round" opacity={0.95} />
         <g transform={`scale(${pop})`}>
-          <text textAnchor="middle" dominantBaseline="central" fontSize={target >= 1000 ? 40 : 56} fontWeight={900} fill="#fff">
+          <text textAnchor="middle" dominantBaseline="central" fontSize={target >= 1000 ? 40 : 56} fontWeight={900} fill="#fff" style={{ fontVariantNumeric: "tabular-nums" }}>
             {show}{unit}
           </text>
         </g>
@@ -422,9 +427,10 @@ const Word: React.FC<{ w: string; i: number; size: number }> = ({ w, i, size }) 
   );
 };
 
-const Judul: React.FC<{ text: string; accent: string; hookF: number }> = ({ text, accent, hookF }) => {
+const Judul: React.FC<{ text: string; accent: string; hookF: number }> = ({ text: raw, accent, hookF }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
+  const text = raw.replace(/[.。]+$/, ""); // tanpa titik otomatis (Hukum #4 bang-motion)
   const size = text.length > 26 ? 38 : text.length > 16 ? 48 : 58;
   const s = spring({ frame, fps, config: { damping: 12, stiffness: 140, mass: 0.6 } });
   // Ken Burns masuk + exit keluar di akhir scene hook (bukan hard cut)
@@ -461,13 +467,55 @@ const BulletScene: React.FC<{ t: string; a: AnimId; idx: number; accent: string;
     const exitP = interpolate(frame, [bulletF - 10, bulletF - 1], [0, 1], { extrapolateRight: "clamp", extrapolateLeft: "clamp" });
     const zoom = interpolate(frame, [0, bulletF], [1, 1.05], { extrapolateRight: "clamp", extrapolateLeft: "clamp" });
     const floatY = Math.sin(frame / 12 + idx * 1.3) * 6;
-    const y = (1 - enter) * 52 - exitP * 40 + floatY;
-    const scale = (0.86 + 0.14 * enter) * zoom * (1 - 0.08 * exitP);
     const op = Math.min(enter * 2, 1) * (1 - exitP);
-    const fs = t.length > 46 ? 25 : t.length > 32 ? 28 : 31;
+    /* Hukum #4 bang-motion: dua adegan berturut-turut TIDAK boleh sama dalam
+     * ukuran, arah masuk, dan posisi teks → 3 varian layout berputar per idx. */
+    const variant = idx % 3;
+    const y = (variant === 0 ? (1 - enter) * 52 : 0) - exitP * 40 + floatY;
+    const x = variant === 1 ? -(1 - enter) * 90 : variant === 2 ? (1 - enter) * 90 : 0;
+    const fs = (t.length > 46 ? 25 : t.length > 32 ? 28 : 31) + (variant === 1 ? 2 : 0);
+    const text = t.replace(/[.。]+$/, ""); // tanpa titik otomatis (Hukum #4)
     const glow = 26 + Math.sin(frame / 5 + idx) * 14;
+    /* Latar segmen hidup (bang-motion §7c/§7d — bukan flat, bukan diam):
+     * blob accent bernapas di posisi berbeda tiap adegan + bentuk besar
+     * berputar lambat di sudut bergantian + sapuan cahaya sekali saat masuk. */
+    const blobX = 20 + (idx % 2) * 55 + Math.sin(frame / 17 + idx * 2) * 8;
+    const blobY = 16 + (idx % 3) * 26 + Math.cos(frame / 21 + idx) * 8;
+    const corner = ["-150px -130px auto auto", "auto -150px -150px auto", "auto auto -140px -150px"][variant];
+    const sweep = interpolate(frame, [2, 18], [-1.2, 1.2], { extrapolateRight: "clamp", extrapolateLeft: "clamp" });
+    const IconBox: React.FC<{ h: number }> = ({ h }) => (
+      <div style={{ height: h, display: "flex", alignItems: "center", justifyContent: "center", filter: `drop-shadow(0 10px ${glow}px ${accent}66)` }}>
+        <SceneIcon a={a} text={t} accent={accent} chip={chip} />
+      </div>
+    );
+    const NumBadge: React.FC<{ s: number }> = ({ s }) => (
+      <div style={{
+        flexShrink: 0, width: s, height: s, borderRadius: s / 2, background: accent, color: "#0b0b0b",
+        display: "flex", alignItems: "center", justifyContent: "center", fontSize: idx > 8 ? 16 : 21, fontWeight: 900,
+        boxShadow: `0 0 ${glow}px ${accent}66`, transform: `scale(${Math.min(enter * 1.6, 1)})`,
+      }}>
+        {idx + 1}
+      </div>
+    );
+    const PillText: React.FC<{ size: number; weight?: number }> = ({ size, weight = 700 }) => (
+      <div style={{ background: `${chip}cc`, borderRadius: 18, padding: "15px 20px", fontSize: size, lineHeight: 1.3, color: "#fff", fontWeight: weight }}>
+        {text.split(/\s+/).map((w, i) => <Word key={i} w={w} i={i + 3} size={size} />)}
+      </div>
+    );
     return (
       <AbsoluteFill style={{ alignItems: "center", justifyContent: "center", padding: 40 }}>
+        {/* latar segmen: blob bernapas (posisi + fasa beda tiap adegan) */}
+        <AbsoluteFill style={{ background: `radial-gradient(circle at ${blobX}% ${blobY}%, ${accent}2b, transparent 55%)` }} />
+        {/* bentuk besar berputar lambat — sudut bergantian per varian */}
+        <svg viewBox="-140 -140 280 280" width={430} height={430} style={{ position: "absolute", inset: corner, opacity: 0.13, pointerEvents: "none" }}>
+          <circle r={110} fill="none" stroke={accent} strokeWidth={3} strokeDasharray="14 22" transform={`rotate(${frame * 0.8})`} />
+          <circle r={78} fill="none" stroke={accent} strokeWidth={2} strokeDasharray="6 18" transform={`rotate(${-frame * 1.3})`} />
+        </svg>
+        {/* sapuan cahaya sekali di awal segmen (di balik konten, di atas latar) */}
+        <AbsoluteFill style={{
+          background: `linear-gradient(115deg, transparent 42%, rgba(255,255,255,.16) 50%, transparent 58%)`,
+          transform: `translateX(${sweep * 640}px)`, opacity: Math.max(0, 1 - frame / 20),
+        }} />
         {img && (
           <AbsoluteFill>
             {/* URL absolut (http…) → renderer server; relatif → staticFile (Player browser) */}
@@ -480,26 +528,54 @@ const BulletScene: React.FC<{ t: string; a: AnimId; idx: number; accent: string;
           </AbsoluteFill>
         )}
         {a === "alert" && <AbsoluteFill style={{ background: RED, opacity: (0.09 + 0.07 * Math.abs(Math.sin(frame / 2))) * (1 - exitP) }} />}
-        <div style={{
-          display: "flex", flexDirection: "column", alignItems: "center", gap: 20, maxWidth: 480,
-          transform: `translateY(${y}px) scale(${scale})`, opacity: op,
-        }}>
-          <div style={{ height: 195, display: "flex", alignItems: "center", justifyContent: "center", filter: `drop-shadow(0 10px ${glow}px ${accent}66)` }}>
-            <SceneIcon a={a} text={t} accent={accent} chip={chip} />
-          </div>
-          <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
-            <div style={{
-              flexShrink: 0, width: 46, height: 46, borderRadius: 23, background: accent, color: "#0b0b0b",
-              display: "flex", alignItems: "center", justifyContent: "center", fontSize: idx > 8 ? 16 : 21, fontWeight: 900,
-              boxShadow: `0 0 ${glow}px ${accent}66`, transform: `scale(${Math.min(enter * 1.6, 1)})`,
-            }}>
-              {idx + 1}
-            </div>
-            <div style={{ background: `${chip}cc`, borderRadius: 18, padding: "15px 20px", fontSize: fs, lineHeight: 1.3, color: "#fff", fontWeight: 700 }}>
-              {t.split(/\s+/).map((w, i) => <Word key={i} w={w} i={i + 3} size={fs} />)}
+        {variant === 0 && (
+          /* varian 0: ikon atas + pill bawah (stacked) — masuk dari bawah */
+          <div style={{
+            display: "flex", flexDirection: "column", alignItems: "center", gap: 20, maxWidth: 480,
+            transform: `translateY(${y}px) scale(${(0.86 + 0.14 * enter) * zoom * (1 - 0.08 * exitP)})`, opacity: op,
+          }}>
+            <IconBox h={195} />
+            <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+              <NumBadge s={46} />
+              <PillText size={fs} />
             </div>
           </div>
-        </div>
+        )}
+        {variant === 1 && (
+          /* varian 1: ikon KIRI + teks kanan — masuk dari kiri, teks lebih besar */
+          <div style={{
+            display: "flex", alignItems: "center", gap: 18, maxWidth: 500,
+            transform: `translateX(${x}px) translateY(${floatY}px) scale(${(0.86 + 0.14 * enter) * zoom * (1 - 0.08 * exitP)})`, opacity: op,
+          }}>
+            <IconBox h={150} />
+            <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 12 }}>
+              <NumBadge s={40} />
+              <PillText size={fs + 2} />
+            </div>
+          </div>
+        )}
+        {variant === 2 && (
+          /* varian 2: teks dulu + marker underline accent, ikon di bawah — masuk dari kanan */
+          <div style={{
+            display: "flex", flexDirection: "column", alignItems: "center", gap: 18, maxWidth: 480,
+            transform: `translateX(${x}px) translateY(${floatY}px) scale(${(0.86 + 0.14 * enter) * zoom * (1 - 0.08 * exitP)})`, opacity: op,
+          }}>
+            <div style={{ position: "relative", textAlign: "center", paddingBottom: 10 }}>
+              <div style={{
+                fontSize: fs + 4, lineHeight: 1.25, fontWeight: 800, color: "#fff",
+                textShadow: "0 4px 22px rgba(0,0,0,.5)", textWrap: "balance",
+              }}>
+                {text.split(/\s+/).map((w, i) => <Word key={i} w={w} i={i + 3} size={fs + 4} />)}
+              </div>
+              <div style={{
+                position: "absolute", bottom: 0, left: "10%", right: "10%", height: 7, borderRadius: 4,
+                background: accent, transform: `scaleX(${Math.min(enter * 1.3, 1)})`, transformOrigin: "left center",
+                opacity: 0.9, boxShadow: `0 0 ${glow}px ${accent}66`,
+              }} />
+            </div>
+            <IconBox h={135} />
+          </div>
+        )}
       </AbsoluteFill>
     );
   };

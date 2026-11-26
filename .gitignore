@@ -35,3 +35,4 @@ scripts/e2e-all-results.json
 
 # skill eksternal motion graphics di .agent/skills — sengaja di-track (melawan rule skills/ di atas)
 !.agent/skills/
+upstream/
