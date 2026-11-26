@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import AppShell from "@/components/AppShell";
 import "./globals.css";
+import "./lab/lab.css";
 
 export const metadata: Metadata = {
   title: "Viralin — Klip Viral Otomatis (Demo)",
@@ -10,7 +11,7 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="id">
+    <html lang="id" suppressHydrationWarning>
       <body>
         <AppShell>{children}</AppShell>
       </body>
