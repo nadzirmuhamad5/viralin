@@ -9,6 +9,7 @@ import { run as brandKit } from "./brand-kit";
 import { run as thumbnail } from "./thumbnail";
 import { run as highlightBola } from "./highlight-bola";
 import { run as motionGraphic } from "./motion-graphic";
+import { run as motionStudio } from "./motion-studio";
 import { run as kontenTempel } from "./konten-tempel";
 import { run as rageBait } from "./ragebait";
 import { run as viralKonten } from "./viral-konten";
@@ -31,6 +32,7 @@ export const TOOL_RUNNERS: Record<string, (ctx: ToolCtx) => Promise<void>> = {
   thumbnail: thumbnail,
   "highlight-bola": highlightBola,
   "motion-graphic": motionGraphic,
+  "motion-studio": motionStudio,
   "konten-tempel": kontenTempel,
   ragebait: rageBait,
   "viral-konten": viralKonten,

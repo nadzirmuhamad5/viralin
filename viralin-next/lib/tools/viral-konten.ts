@@ -246,7 +246,7 @@ function mgEvents(i: number, total: number, sc: Scene, isHook: boolean, isCta: b
     return [
       { delayMs: 60, style: "Badge", pos: [270, 210], align: 5, spring: SPRING_SNAPPY, text: BADGE_TEXT[gaya] },
       { delayMs: 190, style: "Title", pos: [270, 288], align: 5, spring: SPRING_STD, text: l1 },
-      ...(l2 ? [{ delayMs: 290, style: "Title", pos: [270, 348], align: 5 as 5, spring: SPRING_STD, text: l2 }] : []),
+      ...(l2 ? [{ delayMs: 290, style: "Title", pos: [270, 348] as [number, number], align: 5 as 5, spring: SPRING_STD, text: l2 }] : []),
     ];
   }
   if (isCta) {
@@ -259,7 +259,7 @@ function mgEvents(i: number, total: number, sc: Scene, isHook: boolean, isCta: b
   return [
     { delayMs: 60, style: "Badge", pos: [40, 210], align: 4, spring: SPRING_SNAPPY, text: chip },
     { delayMs: 180, style: "Title", pos: [270, 282], align: 5, spring: SPRING_STD, text: l1 },
-    ...(l2 ? [{ delayMs: 280, style: "Title", pos: [270, 342], align: 5 as 5, spring: SPRING_STD, text: l2 }] : []),
+    ...(l2 ? [{ delayMs: 280, style: "Title", pos: [270, 342] as [number, number], align: 5 as 5, spring: SPRING_STD, text: l2 }] : []),
   ];
 }
 

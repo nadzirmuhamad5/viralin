@@ -163,6 +163,56 @@ export const TOOLS: ToolDef[] = [
     ],
   },
   {
+    id: "motion-studio", name: "Motion Studio", icon: "🎬", group: "Editor & Komposisi", badge: "NEW", live: true,
+    desc: "Motion grafik engine Remotion: hook animasi → bullet reveal → CTA pulse, ilustrasi AI per poin, narasi TTS + caption karaoke, SFX sinkron, render MP4 30fps.",
+    fields: [
+      { key: "mode", label: "Mode", type: "select", default: "manual",
+        options: [
+          { value: "manual", label: "Manual — aku isi sendiri" },
+          { value: "ai", label: "Otomatis AI — LLM susun hook/bullet/CTA dari topik" },
+          { value: "berita", label: "Berita Otomatis — Google News → video (dijadwalkan harian)" },
+        ], hint: "Mode AI & Berita pakai LLM z-ai — gratis" },
+      { key: "topik", label: "Topik / rubrik (mode AI & Berita)", type: "text",
+        placeholder: "mis. tips hemat belanja mahasiswa, atau rubrik: teknologi, olahraga…" },
+      { key: "judul", label: "Judul / hook", type: "text",
+        placeholder: "RAHASIA KONTEN VIRAL", hint: "mode Manual — di mode AI dibuatkan z-ai" },
+      { key: "bullets", label: "Poin (1 per baris — bebas jumlah, makin banyak makin panjang)", type: "textarea",
+        placeholder: "Hook 3 detik pertama\nGaya bicara santai\nCTA jelas di akhir" },
+      { key: "cta", label: "CTA penutup", type: "text", placeholder: "FOLLOW SEKARANG" },
+      { key: "hookdur", label: "Durasi hook (detik)", type: "number", default: "2.5", placeholder: "2.5" },
+      { key: "bulletdur", label: "Durasi per poin (detik)", type: "number", default: "2", placeholder: "2",
+        hint: "banyak poin × durasi ini = panjang tengah video" },
+      { key: "ctadur", label: "Durasi CTA (detik)", type: "number", default: "3", placeholder: "3" },
+      { key: "ilustrasi", label: "Ilustrasi AI per poin", type: "select", default: "ya",
+        options: [
+          { value: "ya", label: "Ya — latar tiap poin digambar AI sesuai topik" },
+          { value: "tidak", label: "Tidak — gradien + ikon saja (lebih cepat)" },
+        ], hint: "mode AI/Berita — +±15 detik per gambar saat render" },
+      { key: "warna", label: "Warna tema", type: "select", default: "green",
+        options: [
+          { value: "green", label: "Hijau Neon" }, { value: "blue", label: "Biru Tech" },
+          { value: "orange", label: "Oranye Panas" }, { value: "pink", label: "Pink Viral" },
+        ] },
+      { key: "sfx", label: "Audio SFX", type: "select", default: "ya",
+        options: [
+          { value: "ya", label: "Dengan SFX (whoosh + pop + ding)" },
+          { value: "tidak", label: "Tanpa audio" },
+        ] },
+      { key: "narmode", label: "Narasi voice-over (Edge TTS)", type: "select", default: "tidak",
+        options: [
+          { value: "tidak", label: "Tanpa suara (hanya SFX)" },
+          { value: "ya", label: "Dengan narasi — teks per bagian dari form/LLM" },
+        ] },
+      { key: "narasi", label: "Teks narasi (1 per baris: hook, tiap poin, CTA — kosongkan biar LLM isi)", type: "textarea",
+        placeholder: "Tiga rahasia konten yang bikin orang berhenti scroll\nKonsisten posting di jam yang sama\n…" },
+      { key: "voice", label: "Suara narasi", type: "select", default: "id-ID-ArdiNeural",
+        options: [
+          { value: "id-ID-ArdiNeural", label: "Ardi — Pria 🇮🇩" },
+          { value: "id-ID-GadisNeural", label: "Gadis — Wanita 🇮🇩" },
+        ] },
+    ],
+  },
+  {
     id: "viral-konten", name: "Viral Konten Studio", icon: "⚡", group: "AI Generatif", badge: "NEW", live: true,
     desc: "Fakta Shock / Tips Kilat / Mitos vs Fakta → short motion-graphics 1080x1920 30fps: pop spring physics, progress bar, karaoke, safe-zone mobile terkunci + subtitle SRT. Standar motion terkunci.",
     fields: [
