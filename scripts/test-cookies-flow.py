@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
-"""Uji 3 skenario anti-bot: (1) mp4 langsung tanpa cookies, (2) YouTube tanpa cookies
-→ gagal dengan pesan baru, (3) YouTube + cookies.txt dummy → cek plumbing cookies."""
+"""Uji 4 skenario anti-bot: (1) mp4 langsung tanpa cookies, (2) YouTube tanpa cookies
+→ gagal dengan pesan baru, (3) YouTube + cookies.txt dummy → cek plumbing cookies,
+(4) YouTube + cookies paste user (string multiline berisi \n) → regresi test-paste-cookies.py."""
 import json
+import os
 import time
 import urllib.request
 
@@ -66,3 +68,20 @@ j = wait_job(post("/api/jobs", {"tool": "transcript", "inputs": {
     "source": "https://www.youtube.com/watch?v=jEeGL9svOWk",
     "cookies": up["uploadId"]}})["id"])
 show("3 YouTube + cookies.txt dummy", j)
+
+# 4. YouTube + cookies paste user → isi cookies.txt mentah dikirim sebagai string
+#    inputs.cookies (multiline, mengandung "\n") — bukan uploadId. Regresi dari
+#    test-paste-cookies.py: pakai cookies asli kalau ada, kalau tidak pakai dummy
+#    agar plumbing paste tetap teruji.
+paste_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                          "viralin-next", "data", "uploads", "manual-yt-cookies.txt")
+if os.path.exists(paste_path):
+    with open(paste_path, encoding="utf-8") as f:
+        pasted = f.read()  # simulasikan user paste isi file cookies
+else:
+    pasted = ck.decode()
+print("\npaste cookies →", len(pasted), "bytes · ada \\n:", "\n" in pasted)
+j = wait_job(post("/api/jobs", {"tool": "transcript", "inputs": {
+    "source": "https://www.youtube.com/watch?v=jEeGL9svOWk",
+    "cookies": pasted}})["id"])
+show("4 YouTube + cookies paste (string \\n)", j)

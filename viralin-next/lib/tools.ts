@@ -28,7 +28,7 @@ export type ToolDef = {
 
 const SOURCE_FIELD: ToolField = {
   key: "source", label: "Video sumber", type: "url",
-  placeholder: "http://127.0.0.1:8080/e2e-ujian.mp4 atau URL YouTube/TikTok",
+  placeholder: "https://contoh.com/video.mp4 atau URL YouTube/TikTok",
   required: true,
   hint: "YouTube kena bot-check? Paste isi cookies.txt di bagian Cookies di bawah (lihat panduannya).",
 };
@@ -75,7 +75,7 @@ export const TOOLS: ToolDef[] = [
     desc: "Gabung beberapa video jadi satu (maks 4 sumber), auto-skala 9:16 + fade.",
     fields: [
       { key: "sources", label: "Daftar URL (satu per baris, maks 4)", type: "textarea", required: true,
-        placeholder: "http://127.0.0.1:8080/e2e-ujian.mp4\nhttp://127.0.0.1:8080/e2e-ujian.mp4" },
+        placeholder: "https://contoh.com/video.mp4\nhttps://contoh.com/video.mp4" },
       { key: "perdur", label: "Durasi per video (detik)", type: "number", default: "15" },
     ],
   },
@@ -127,64 +127,6 @@ export const TOOLS: ToolDef[] = [
     ],
   },
   {
-    id: "motion-studio", name: "Motion Studio", icon: "🎬", group: "Editor & Komposisi", badge: "NEW", live: true,
-    desc: "Motion grafik engine Remotion: preview live di browser, hook animasi → bullet reveal → CTA pulse, SFX sinkron, render MP4 30fps.",
-    fields: [
-      { key: "mode", label: "Mode", type: "select", default: "manual",
-        options: [
-          { value: "manual", label: "Manual — aku isi sendiri" },
-          { value: "ai", label: "Otomatis AI — LLM susun hook/bullet/CTA dari topik" },
-          { value: "berita", label: "Berita Otomatis — Google News → video (dijadwalkan harian)" },
-        ], hint: "Mode AI & Berita pakai LLM Coarena — gratis" },
-      { key: "topik", label: "Topik / rubrik (mode AI & Berita)", type: "text",
-        placeholder: "mis. tips hemat belanja mahasiswa, atau rubrik: teknologi, olahraga…" },
-      { key: "judul", label: "Judul / hook", type: "text",
-        placeholder: "RAHASIA KONTEN VIRAL", hint: "mode Manual — di mode AI dibuatkan z-ai" },
-      { key: "bullets", label: "Poin (1 per baris — bebas jumlah, makin banyak makin panjang)", type: "textarea",
-        placeholder: "Hook 3 detik pertama\nGaya bicara santai\nCTA jelas di akhir" },
-      { key: "cta", label: "CTA penutup", type: "text", placeholder: "FOLLOW SEKARANG" },
-      { key: "hookdur", label: "Durasi hook (detik)", type: "number", default: "2.5", placeholder: "2.5" },
-      { key: "bulletdur", label: "Durasi per poin (detik)", type: "number", default: "2", placeholder: "2",
-        hint: "banyak poin × durasi ini = panjang tengah video" },
-      { key: "ctadur", label: "Durasi CTA (detik)", type: "number", default: "3", placeholder: "3" },
-      { key: "ilustrasi", label: "Ilustrasi AI per poin", type: "select", default: "ya",
-        options: [
-          { value: "ya", label: "Ya — latar tiap poin digambar AI sesuai topik" },
-          { value: "tidak", label: "Tidak — gradien + ikon saja (lebih cepat)" },
-        ], hint: "mode AI/Berita — +±15 detik per gambar saat render" },
-      { key: "warna", label: "Warna tema", type: "select", default: "green",
-        options: [
-          { value: "green", label: "Hijau Neon" }, { value: "blue", label: "Biru Tech" },
-          { value: "orange", label: "Oranye Panas" }, { value: "pink", label: "Pink Viral" },
-        ] },
-      { key: "sfx", label: "Audio SFX", type: "select", default: "ya",
-        options: [
-          { value: "ya", label: "Dengan SFX (whoosh + pop + ding)" },
-          { value: "tidak", label: "Tanpa audio" },
-        ] },
-      { key: "narmode", label: "Narasi voice-over (Edge TTS)", type: "select", default: "tidak",
-        options: [
-          { value: "tidak", label: "Tanpa narasi — teks besar saja" },
-          { value: "auto", label: "Nyala — AI menulis narasinya" },
-        ], hint: "teks besar jadi gambaran besar; detailnya dibacakan suara + caption karaoke sinkron; durasi tiap bagian otomatis menyesuaikan panjang narasi" },
-      { key: "voice", label: "Suara narasi", type: "select", default: "id-ID-ArdiNeural",
-        options: [
-          { value: "id-ID-ArdiNeural", label: "Ardi — Pria 🇮🇩" },
-          { value: "id-ID-GadisNeural", label: "Gadis — Wanita 🇮🇩" },
-          { value: "en-US-AndrewMultilingualNeural", label: "Andrew — multibahasa" },
-          { value: "en-US-AvaMultilingualNeural", label: "Ava — multibahasa" },
-        ], hint: "dipakai kalau narasi nyala" },
-      { key: "narasi", label: "Narasi per bagian (opsional — menggantikan AI)", type: "textarea",
-        placeholder: "Baris 1 = narasi hook\nBaris 2 dst = narasi tiap poin\nBaris terakhir = narasi CTA",
-        hint: "1 baris = 1 bagian urut hook → poin → CTA; kosongkan baris = bagian itu tanpa narasi; isi apa pun di sini → AI tidak menulis" },
-      { key: "simpanDrive", label: "Storage hasil", type: "select", default: "tidak",
-        options: [
-          { value: "tidak", label: "Simpan di server (download dari sini)" },
-          { value: "ya", label: "Upload ke Google Drive juga (butuh VL_GDRIVE_* di deploy/env)" },
-        ], hint: "Link share Drive muncul di panel hasil job" },
-    ],
-  },
-  {
     id: "konten-tempel", name: "VIRAL Content Creator", icon: "🚀", group: "AI Generatif", badge: "VIRAL", live: true,
     desc: "Satu ide → naskah LLM → suara TTS → background AI → video vertikal ber-caption. Faceless, gratis.",
     fields: [
@@ -208,22 +150,16 @@ export const TOOLS: ToolDef[] = [
     ],
   },
   {
-    id: "ragebait", name: "Rage Bait Studio", icon: "😡", group: "AI Generatif", badge: "VIRAL", live: true,
-    desc: "Short rage-bait ala Issei Nugroho: judul provokatif + momen bernomor gaya gue/lu, ilustrasi komik, narasi cepat, aksen merah.",
+    id: "ragebait", name: "Rage Bait Studio", icon: "🔥", group: "AI Generatif", badge: "NEW", live: true,
+    desc: "Short rage bait ala kreator YouTube ID: hook provokatif + 3 momen nyebelin bernomor, ilustrasi komik AI, narasi gue/lu, karaoke merah, TTS pace cepat. Preset rage terkunci — tinggal isi topik.",
     fields: [
-      { key: "topik", label: "Ide / topik rage bait (kalau kosong, pakai naskah)", type: "text",
-        placeholder: "kelakuan penumpang angkot paling bikin darah tinggi" },
-      { key: "naskah", label: "Atau naskah sendiri", type: "textarea",
-        placeholder: "Tulis naskah lengkap di sini… (kalau diisi, topik diabaikan)" },
-      { key: "voice", label: "Suara narasi", type: "select", default: "id-ID-ArdiNeural",
+      { key: "topik", label: "Topik yang bikin darah naik", type: "text", required: true,
+        placeholder: "penumpang angkot paling nyebelin" },
+      { key: "voice", label: "Suara", type: "select", default: "id-ID-ArdiNeural",
         options: [
           { value: "id-ID-ArdiNeural", label: "Ardi — Pria 🇮🇩" },
           { value: "id-ID-GadisNeural", label: "Gadis — Wanita 🇮🇩" },
-          { value: "en-US-AndrewMultilingualNeural", label: "Andrew — multibahasa" },
-          { value: "en-US-AvaMultilingualNeural", label: "Ava — multibahasa" },
-        ], hint: "dibacakan cepat +12% — pace khas shorts rage bait" },
-      { key: "preset", label: "Gaya caption", type: "select", default: "bold-impact",
-        options: [], hint: "Diisi otomatis dari picker preset." },
+        ] },
     ],
   },
   {

@@ -1,90 +1,23 @@
-import { execFile } from "child_process";
 import { promises as fs } from "fs";
 import path from "path";
 import { randomUUID } from "crypto";
 import { DATA, jobs, persist, type Clip, type Job, type Stage } from "./store";
 import { buildAss, DEFAULT_PRESET, type Word } from "./captions";
 import { runTool } from "./toolrun";
-import { ytdlpFetch, ytdlpRun, probeDur, UPLOAD_DIR } from "./mediakit";
-
-const PY = process.env.PYTHON || "python3";
-const DEPS = "/home/z/my-project/.deps";
-const YTDLP = path.join(DEPS, "bin", "yt-dlp");
-
-/** Opsi storage: upload file hasil ke Google Drive (butuh VL_GDRIVE_* di deploy/env). */
-async function simpanKeDrive(job: Job, dir: string, log: (l: string) => void): Promise<void> {
-  if ((job.inputs?.simpanDrive || "tidak") !== "ya" || !job.files?.length) return;
-  const { gdriveUpload } = await import("./storage-drive");
-  for (const f of job.files) {
-    log(`[drive] mengunggah ${f.file} ke Google Drive…`);
-    try {
-      f.link = await gdriveUpload(path.join(dir, f.file), f.file, log);
-      log(`[drive] ✓ ${f.file} → ${f.link}`);
-    } catch (e) {
-      throw new Error(`upload Google Drive gagal (${f.file}): ${(e as Error).message}`);
-    }
-  }
-}
-const WORKER = path.join(process.cwd(), "worker", "transcribe.py");
-const FONTS_DIR = path.join(process.cwd(), "assets", "caption-fonts");
-const WHISPER_MODEL = process.env.VL_WHISPER_MODEL || "small";
-const WHISPER_LANG = process.env.VL_WHISPER_LANGUAGE || "id"; // produk fokus Indonesia; auto sering salah deteksi TTS
-/** Panjang maksimal SATU BAGIAN analisis — video lebih panjang dipecah otomatis
- *  (contoh: 1 jam → 3 bagian), momen dicari per bagian satu demi satu. */
-const PART_SECONDS = Number(process.env.VL_PART_SECONDS || 1500); // 25 menit
-const ENV = {
-  ...process.env,
-  HF_HOME: "/home/z/my-project/.cache/huggingface",
-  PYTHONPATH: DEPS,
-};
+import { ytdlpFetch, transcribe, type Seg } from "./mediakit";
+import { run, tailErr } from "./exec";
+import { FONTS_DIR, MAX_SECONDS } from "./config";
 
 const STAGES: Array<[string, string]> = [
-  ["download", "🔎 analisis penuh — metadata + subtitle (tanpa unduh media)"],
-  ["probe", "⏱️ durasi penuh dari metadata"],
-  ["transcribe", "🎙️ transkrip — subtitle penuh / whisper audio"],
-  ["analyze", "🧠 pilih momen — kepadatan ujaran seluruh video"],
-  ["render", "🎬 unduh per-segmen + timing kata + render 9:16"],
+  ["download", "⬇️ yt-dlp — unduh video"],
+  ["probe", "🔎 ffprobe — durasi & metadata"],
+  ["transcribe", "🎙️ faster-whisper — transkrip + timestamp"],
+  ["analyze", "🧠 pilih momen — density scene + kepadatan ujaran"],
+  ["render", "🎬 ffmpeg — render klip 9:16 + caption"],
 ];
-
-function run(
-  cmd: string[],
-  opts: { env?: NodeJS.ProcessEnv; onLine?: (l: string) => void } = {}
-): Promise<{ code: number; stdout: string; stderr: string }> {
-  return new Promise((resolve, reject) => {
-    const p = execFile(
-      cmd[0],
-      cmd.slice(1),
-      { maxBuffer: 64 << 20, timeout: 600_000, env: opts.env ?? process.env },
-      (err, stdout, stderr) => {
-        if (err && (err as NodeJS.Process & { killed?: boolean }).killed) {
-          reject(new Error(`timeout: ${cmd[0]}`));
-        } else {
-          resolve({
-            code: err ? ((err as { code?: number }).code ?? 1) : 0,
-            stdout: String(stdout),
-            stderr: String(stderr),
-          });
-        }
-      }
-    );
-    if (opts.onLine) {
-      const pump = (d: unknown) =>
-        String(d)
-          .split(/[\r\n]+/)
-          .forEach((l) => l.trim() && opts.onLine!(l));
-      p.stdout?.on("data", pump);
-      p.stderr?.on("data", pump);
-    }
-  });
-}
 
 const r1 = (n: number) => Math.round(n * 10) / 10;
 const r2 = (n: number) => Math.round(n * 100) / 100;
-
-function tailErr(s: string): string {
-  const lines = s.split(/\r?\n/).filter((l) => l.trim());
-  return lines.slice(-3).join(" · ").slice(0, 300) || "(kosong)";
-}
 
 const TOOL_STAGES: Array<[string, string]> = [
   ["sumber", "📥 siapkan sumber (unduh/upload)"],
@@ -135,10 +68,12 @@ function pushLog(job: Job, line: string, persistToo = false) {
   if (persistToo) void persist(job);
 }
 
+/** Deteksi cut scene. Video di-downscale ke 160×90 dulu — skor scene cukup akurat
+ *  untuk pemilihan momen, sementara CPU decode turun 20–50× dibanding resolusi penuh. */
 async function detectScenes(src: string, dur: number, job: Job): Promise<number[]> {
   const r = await run([
-    "ffmpeg", "-hide_banner", "-i", src,
-    "-vf", "select='gt(scene,0.3)',showinfo", "-f", "null", "-",
+    "ffmpeg", "-hide_banner", "-an", "-i", src,
+    "-vf", "scale=160:90,select='gt(scene,0.3)',showinfo", "-f", "null", "-",
   ]);
   const ts = [...r.stderr.matchAll(/pts_time:([0-9.]+)/g)].map((m) => parseFloat(m[1]));
   const out = [...new Set(ts.filter((t) => 0 < t && t < dur))].sort((a, b) => a - b);
@@ -146,7 +81,6 @@ async function detectScenes(src: string, dur: number, job: Job): Promise<number[
   return [0, ...out, dur];
 }
 
-type Seg = { start: number; end: number; text: string; words?: Word[] };
 type Proposal = { start: number; end: number; score: number };
 
 function pickProposals(segs: Seg[], cuts: number[], dur: number): Proposal[] {
@@ -195,101 +129,11 @@ function pickProposals(segs: Seg[], cuts: number[], dur: number): Proposal[] {
   return picked;
 }
 
-const fmtMenit = (s: number): string => `${Math.floor(s / 60)}m${Math.round(s % 60)}s`;
-
-/** Pecah durasi penuh jadi bagian-bagian ≤ PART_SECONDS lalu pilih momen PER BAGIAN:
- *  terbaik bagian 1 → bagian 2 → … lalu kandidat kedua tiap bagian (round-robin).
- *  Menjamin klip menyebar ke seluruh video, bukan numpuk di menit-menit awal. */
-function pickProposalsPerBagian(segs: Seg[], dur: number, log: (l: string) => void): Proposal[] {
-  const parts = Math.max(1, Math.ceil(dur / PART_SECONDS));
-  const perPart: Proposal[][] = [];
-  for (let k = 0; k < parts; k++) {
-    const lo = k * PART_SECONDS;
-    const hi = Math.min((k + 1) * PART_SECONDS, dur);
-    const inPart = segs.filter((s) => s.end > lo + 1 && s.start < hi - 1);
-    // kandidat dari potongan subtitel bagian ini (waktu tetap absolut)
-    const cands = pickProposals(inPart, [], hi - lo)
-      .filter((p) => p.end > lo + 1 && p.start < hi - 1);
-    log(`[bagian ${k + 1}/${parts}] ${fmtMenit(lo)}–${fmtMenit(hi)} — ${inPart.length} baris ucapan, ${cands.length} kandidat momen`);
-    perPart.push(cands);
-  }
-  const picked: Proposal[] = [];
-  for (let round = 0; picked.length < 3; round++) {
-    let added = false;
-    for (let k = 0; k < parts && picked.length < 3; k++) {
-      const c = perPart[k]?.[round];
-      if (!c) continue;
-      if (picked.every((p) => c.end <= p.start + 3 || c.start >= p.end - 3)) {
-        picked.push(c);
-        added = true;
-        log(`[momen] bagian ${k + 1} → ${fmtMenit(c.start)}–${fmtMenit(c.end)} (skor ${c.score})`);
-      }
-    }
-    if (!added) break;
-  }
-  return picked;
-}
-
 /** Kumpulkan semua kata ber-timestamp dari segmen whisper (untuk caption karaoke). */
 function allWords(segs: Seg[]): Word[] {
   const out: Word[] = [];
   for (const s of segs) {
     if (Array.isArray(s.words) && s.words.length) out.push(...s.words);
-  }
-  return out;
-}
-
-function tsSec(t: string): number {
-  const m = t.trim().match(/^(?:(\d+):)?(\d+):(\d+(?:[.,]\d+)?)$/);
-  if (!m) return NaN;
-  return (m[1] ? Number(m[1]) * 3600 : 0) + Number(m[2]) * 60 + parseFloat(m[3].replace(",", "."));
-}
-
-/** Parse VTT/SRT → segmen; buang overlap rolling auto-sub YouTube
- *  (cue baru = ekor cue sebelumnya + kata baru → potong ekornya). */
-async function parseSubs(file: string): Promise<Seg[]> {
-  const raw = await fs.readFile(file, "utf-8").catch(() => "");
-  const lines = raw.split(/\r?\n/);
-  const out: Seg[] = [];
-  let lastFull = "";
-  for (let i = 0; i < lines.length; i++) {
-    const m = lines[i].match(
-      /(\d{1,2}:\d{2}:\d{2}[.,]\d{1,3}|\d{1,2}:\d{2}[.,]\d{1,3})\s*-->\s*(\d{1,2}:\d{2}:\d{2}[.,]\d{1,3}|\d{1,2}:\d{2}[.,]\d{1,3})/
-    );
-    if (!m) continue;
-    const start = tsSec(m[1]);
-    if (!Number.isFinite(start)) continue;
-    const end = Math.max(Number.isFinite(tsSec(m[2])) ? tsSec(m[2]) : start + 1, start + 0.5);
-    const body: string[] = [];
-    for (let j = i + 1; j < lines.length && lines[j].trim() && !lines[j].includes("-->"); j++) {
-      if (!/^\d+$/.test(lines[j].trim())) body.push(lines[j].trim());
-    }
-    const text = body.join(" ").replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim();
-    if (!text) continue;
-    const maxK = Math.min(lastFull.length, text.length - 1);
-    let k = 0;
-    for (let cand = maxK; cand > 0; cand--) {
-      if (lastFull.slice(lastFull.length - cand) === text.slice(0, cand)) { k = cand; break; }
-    }
-    const newText = text.slice(k).trim();
-    lastFull = text;
-    if (!newText) continue;
-    out.push({ start: r2(start), end: r2(end), text: newText });
-  }
-  return out;
-}
-
-/** Kata sintetis dari baris subtitel dalam window (fallback timing per kata). */
-function synthWords(segs: Seg[], start: number, end: number): Word[] {
-  const out: Word[] = [];
-  for (const s of segs) {
-    if (s.end <= start || s.start >= end) continue;
-    const ws = s.text.split(/\s+/).filter(Boolean);
-    if (!ws.length) continue;
-    const a = Math.max(s.start - start, 0);
-    const b = Math.min(s.end - start, end - start);
-    const step = (b - a) / ws.length;
-    ws.forEach((w, k) => out.push({ start: r2(a + k * step), end: r2(a + (k + 1) * step), word: w }));
   }
   return out;
 }
@@ -312,7 +156,6 @@ export async function runJob(job: Job): Promise<void> {
       setStage(job, "proses", "done");
       curStage = "hasil";
       setStage(job, "hasil", "run");
-      await simpanKeDrive(job, dir, (l: string) => pushLog(job, l));
       job.status = "done";
       setStage(job, "hasil", "done");
       pushLog(job, "✅ selesai", true);
@@ -328,155 +171,84 @@ export async function runJob(job: Job): Promise<void> {
   }
 
   try {
-    // ── 1. analisis penuh — metadata + SUBTITLE YouTube (tanpa unduh media) ──
-    // Subtitel mencakup 100% durasi dan unduhannya cuma puluhan KB;
-    // video diunduh per-segmen di tahap render.
+    // ── 1. unduh (yt-dlp, + cookies opsional & fallback client) ───────
     curStage = "download";
     setStage(job, "download", "run");
-    let realDur = 0;
-    if (job.url && job.url.startsWith("<uploadId>:")) {
-      // upload lokal — ffprobe langsung di file, tanpa yt-dlp
-      const upId = job.url.slice("<uploadId>:".length).replace(/[^a-zA-Z0-9._-]/g, "");
-      realDur = await probeDur(path.join(UPLOAD_DIR, upId));
-      job.title = upId.slice(0, 60);
-    } else {
-      try {
-        const meta = await ytdlpRun(
-          ["--no-warnings", "--skip-download", "--print", "%(duration)s", "--print", "%(title)s"],
-          job.url, job.inputs?.cookies, (l) => pushLog(job, l),
-        );
-        const metaLines = meta.stdout.trim().split("\n");
-        const metaDur = parseFloat(metaLines[0] || "0");
-        realDur = Number.isFinite(metaDur) && metaDur > 0 ? metaDur : 0;
-        if (metaLines[1]) job.title = metaLines[1].slice(0, 60);
-      } catch { /* file media langsung (mp4 dsb) — coba ffprobe di bawah */ }
-      if (!realDur) {
-        // yt-dlp sering tak membaca durasi mp4 langsung (http.server tanpa Range) → ffprobe
-        realDur = await probeDur(job.url).catch(() => 0);
-        if (realDur && !job.title) {
-          job.title = decodeURIComponent((job.url.split("/").pop() || "").split("?")[0]).slice(0, 60);
-        }
+    logTick = 0;
+    const client = await ytdlpFetch(
+      [
+        "--no-cache-dir", "--no-warnings", "--newline",
+        // trik YTSage: sorting resolusi lebih tahan banting daripada -f ketat
+        "-S", "res:1080", "-N", "4",
+        "--merge-output-format", "mp4",
+        "-o", path.join(dir, "source.%(ext)s"),
+      ],
+      job.url,
+      job.inputs?.cookies,
+      (l) => pushLog(job, l),
+      (l) => {
+        if (l.startsWith("[download]") && ++logTick % 6 !== 0) return;
+        pushLog(job, l);
       }
+    );
+    pushLog(job, "[sumber] unduhan selesai" + (client === "default" ? "" : ` (client ${client})`));
+    let src = "";
+    for (const f of await fs.readdir(dir)) {
+      if (f.startsWith("source.")) src = path.join(dir, f);
     }
-    if (!realDur) throw new Error("durasi video tidak diketahui dari metadata");
-    job.sourceSeconds = r1(realDur);
-    pushLog(job, `[sumber] video ${Math.round(realDur / 60)} menit — analisis dari subtitel (tanpa unduh media)`, true);
-    // subtitel: satu bahasa per percobaan (id dulu — fokus produk) — HTTP 429 YouTube
-    // sering menghentikan track kedua padahal track pertama sudah tersimpan,
-    // jadi cek file yang ada di folder MESKIPUN yt-dlp exit≠0.
-    let subsFile = "";
-    const pickSubs = async (): Promise<string> => {
-      let found = "";
-      for (const f of await fs.readdir(dir)) {
-        if (/^subs\..*\.(vtt|srt)$/i.test(f)) found = path.join(dir, f);
+    if (!src) throw new Error("file sumber tidak ditemukan setelah unduh");
+    // kalau bukan mp4 (mis. webm vp9), remux/transcode ringan ke mp4
+    if (!src.endsWith(".mp4")) {
+      const mp4 = src.replace(/\.\w+$/, ".mp4");
+      const rm = await run(["ffmpeg", "-y", "-i", src, "-c", "copy", "-movflags", "+faststart", mp4]);
+      if (rm.code !== 0) {
+        const tc = await run(["ffmpeg", "-y", "-i", src, "-c:v", "libx264", "-preset", "veryfast", "-crf", "27", "-c:a", "aac", mp4]);
+        if (tc.code !== 0) throw new Error("konversi ke mp4 gagal: " + tailErr(tc.stderr));
       }
-      return found;
-    };
-    for (const lang of ["id", "en"]) {
-      try {
-        await ytdlpFetch(
-          ["-q", "--no-warnings", "--skip-download", "--write-subs", "--write-auto-subs",
-           "--sub-langs", lang, "--sub-format", "vtt/srt/best",
-           "-o", path.join(dir, "subs.%(ext)s")],
-          job.url, job.inputs?.cookies, (l) => pushLog(job, l),
-        );
-      } catch { /* 429 dsb — tetap cek file yang sempat tersimpan */ }
-      subsFile = await pickSubs();
-      if (subsFile) break;
+      src = mp4;
     }
     setStage(job, "download", "done");
 
-    // ── 2. probe: durasi penuh dari metadata ──────────────────────────
+    // ── 2. probe ──────────────────────────────────────────────────────
     curStage = "probe";
     setStage(job, "probe", "run");
-    let dur = realDur;
-    let segs: Seg[] = [];
-    if (subsFile) {
-      segs = await parseSubs(subsFile);
-      const mm = subsFile.match(/\.([a-z]{2}(?:-[\w-]+)?)\.(?:vtt|srt)$/i);
-      if (mm) job.lang = mm[1].toLowerCase();
-      pushLog(job, `[subtitel] ${segs.length} baris mencakup penuh ${Math.round(dur / 60)} menit`, true);
-      if (!segs.length) pushLog(job, "⚠️ subtitel gagal diparse — fallback ke audio");
+    const pr = await run([
+      "ffprobe", "-v", "error", "-show_entries", "format=duration",
+      "-of", "json", src,
+    ]);
+    const dur = parseFloat(JSON.parse(pr.stdout).format?.duration || "0");
+    if (!dur) throw new Error("ffprobe gagal membaca durasi");
+    if (dur > MAX_SECONDS) {
+      throw new Error(`video ${Math.round(dur)}s > batas ${MAX_SECONDS}s — demo ini membatasi durasi`);
     }
+    job.sourceSeconds = r1(dur);
+    pushLog(job, `[probe] durasi ${r1(dur)}s`, true);
     setStage(job, "probe", "done");
 
-    // ── 3. transkrip — subtitel penuh ATAU fallback whisper audio window ──
+    // ── 3. transkrip (faster-whisper, resident worker + fallback) ─────
     curStage = "transcribe";
     setStage(job, "transcribe", "run");
-    if (!segs.length) {
-      // fallback (video tanpa subtitel): audio DIPER BAGIAN (≤ PART_SECONDS) + whisper
-      const fullDur = dur || PART_SECONDS;
-      const parts = Math.max(1, Math.ceil(fullDur / PART_SECONDS));
-      if (parts > 1) {
-        pushLog(job, `[bagian] tanpa subtitel — audio diproses per bagian (${parts} × ≤${Math.round(PART_SECONDS / 60)} mnt)`, true);
-      }
-      for (let k = 0; k < parts; k++) {
-        const lo = k * PART_SECONDS;
-        const hi = Math.min((k + 1) * PART_SECONDS, fullDur);
-        if (lo >= fullDur) break;
-        pushLog(job, `[bagian ${k + 1}/${parts}] unduh audio ${fmtMenit(lo)}–${fmtMenit(hi)} → whisper`, true);
-        const wav = path.join(dir, `audio-${k}.wav`);
-        await ytdlpFetch(
-          ["-q", "--no-warnings", "-f", "ba[ext=m4a]/ba/b",
-           "--download-sections", `*${lo}-${hi}`,
-           "-o", path.join(dir, `audio-${k}.%(ext)s`)],
-          job.url, job.inputs?.cookies, (l) => pushLog(job, l),
-        ).catch(() => { /* URL file langsung tak mendukung sections → fallback ffmpeg di bawah */ });
-        let audio = "";
-        for (const f of await fs.readdir(dir)) {
-          if (f.startsWith(`audio-${k}.`) && !f.endsWith(".part")) audio = path.join(dir, f);
-        }
-        let haveWav = false;
-        if (audio && (await probeDur(audio).catch(() => 0)) > 0) {
-          const ax = await run(["ffmpeg", "-y", "-i", audio, "-vn", "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le", wav]);
-          if (ax.code === 0) haveWav = true;
-        }
-        if (!audio || !haveWav) {
-          // fallback: file http langsung — ffmpeg ekstrak audio per rentang (range request)
-          const fx = await run(["ffmpeg", "-y", "-loglevel", "error", "-ss", String(lo), "-to", String(hi),
-            "-i", job.url, "-vn", "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le", wav]);
-          if (fx.code !== 0) throw new Error(`audio bagian ${k + 1} gagal diunduh: ` + tailErr(fx.stderr));
-        }
-        if (audio && audio !== wav) await fs.rm(audio, { force: true });
-        const tr = await run(
-          [PY, WORKER, wav, "--model", WHISPER_MODEL, "--language", WHISPER_LANG, "--threads", "2"],
-          { env: ENV, onLine: (l) => l.startsWith("[whisper]") && pushLog(job, l) }
-        );
-        if (tr.code !== 0) throw new Error("whisper gagal: " + tailErr(tr.stderr));
-        const info = JSON.parse(tr.stdout.trim().split("\n").pop() || "{}") as {
-          language?: string; segments?: Seg[];
-        };
-        const segsPart = (info.segments || []).map((s) => ({ ...s, start: s.start + lo, end: s.end + lo }));
-        segs.push(...segsPart);
-        if (info.language && !job.lang) job.lang = info.language;
-        pushLog(job, `[whisper][bagian ${k + 1}] ${segsPart.length} segmen · ${allWords(segsPart).length} kata ber-timestamp`, true);
-        await fs.rm(wav, { force: true });
-        await fs.rm(audio, { force: true });
-      }
-    } else {
-      pushLog(job, "[whisper] analisis dilewati — transkrip penuh sudah dari subtitel (whisper per-segmen di tahap render)");
-    }
+    const wav = path.join(dir, "audio.wav");
+    const ax = await run(["ffmpeg", "-y", "-i", src, "-vn", "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le", wav]);
+    if (ax.code !== 0) throw new Error("ekstrak audio gagal: " + tailErr(ax.stderr));
+    const info = await transcribe(wav, dir, (l) => pushLog(job, l));
+    const segs: Seg[] = info.segments;
+    job.lang = info.language;
+    const nWords = allWords(segs).length;
+    if (!segs.length) pushLog(job, "⚠️ tidak ada ucapan terdeteksi — momen dipilih dari scene", true);
+    if (!nWords) pushLog(job, "⚠️ word timestamp kosong — klip dirender tanpa caption", true);
     setStage(job, "transcribe", "done");
-    if (!segs.length) pushLog(job, "⚠️ tidak ada ucapan terdeteksi — momen diambil dari awal video");
 
     // ── 4. analisis & pilih momen ─────────────────────────────────────
     curStage = "analyze";
     setStage(job, "analyze", "run");
-    // tanpa unduh video penuh → scene detection dilewati; pemilihan murni dari kepadatan ujaran
-    pushLog(job, "[scene] dilewati — tanpa unduh video penuh (pemilihan dari kepadatan ujaran)");
-    const nParts = Math.max(1, Math.ceil(dur / PART_SECONDS));
-    if (nParts > 1) {
-      pushLog(job, `[bagian] video ${Math.round(dur / 60)} menit — dipecah otomatis jadi ${nParts} bagian (≤${Math.round(PART_SECONDS / 60)} mnt), momen dicari per bagian`, true);
-    }
-    const proposals = pickProposalsPerBagian(segs, dur, (l) => pushLog(job, l));
+    const cuts = await detectScenes(src, dur, job);
+    const proposals = pickProposals(segs, cuts, dur);
     if (!proposals.length) throw new Error("tidak ada kandidat klip yang bisa dibuat");
     const first = segs.find((s) => s.text);
-    // metadata judul YouTube lebih baik daripada baris transkrip pertama
-    if (!job.title || job.title === job.url) {
-      job.title = (first?.text || `Klip dari ${job.url}`).slice(0, 60);
-    }
+    job.title = (first?.text || `Klip dari ${job.url}`).slice(0, 60);
     pushLog(job,
-      `[momen] ${proposals.length} klip terpilih: ${proposals.map((p) => fmtMenit(p.start) + "–" + fmtMenit(p.end)).join(" · ")}`,
+      `[momen] ${proposals.map((p, i) => `#${i + 1} ${p.start}–${p.end}s (skor ${p.score})`).join(" · ")}`,
       true);
     setStage(job, "analyze", "done");
 
@@ -485,74 +257,20 @@ export async function runJob(job: Job): Promise<void> {
     setStage(job, "render", "run");
     const presetId = job.captionPreset || DEFAULT_PRESET;
     pushLog(job, `[render] preset caption: ${presetId}`, true);
+    const words = allWords(segs);
     const clips: Clip[] = [];
     for (let i = 0; i < proposals.length; i++) {
       const p = proposals[i];
       const cid = randomUUID().slice(0, 8);
       const file = `klip-${i + 1}-${cid}.mp4`;
       const thumb = `th-${cid}.jpg`;
-      const t0 = Date.now();
-      // unduh HANYA segmen momen ini (~beberapa MB) — bukan video penuh
-      const segBase = path.join(dir, `seg-${i}.%(ext)s`);
-      await ytdlpFetch(
-        ["-q", "--no-warnings", "-S", "res:1080", "-N", "4", "--merge-output-format", "mp4",
-         "--download-sections", `*${p.start}-${p.end}`, "-o", segBase],
-        job.url, job.inputs?.cookies, (l) => pushLog(job, l),
-      );
-      let seg = "";
-      for (const f of await fs.readdir(dir)) {
-        if (f.startsWith(`seg-${i}.`) && !f.endsWith(".part")) seg = path.join(dir, f);
-      }
-      if (!seg || (await probeDur(seg).catch(() => 0)) <= 0) {
-        // URL file langsung: yt-dlp tak selalu mendukung --download-sections → ffmpeg range
-        seg = path.join(dir, `seg-${i}.mp4`);
-        const fx = await run(["ffmpeg", "-y", "-loglevel", "error", "-ss", String(p.start), "-to", String(p.end),
-          "-i", job.url, "-c", "copy", "-movflags", "+faststart", seg]);
-        if (fx.code !== 0) {
-          const tc = await run(["ffmpeg", "-y", "-loglevel", "error", "-ss", String(p.start), "-to", String(p.end),
-            "-i", job.url, "-c:v", "libx264", "-preset", "veryfast", "-crf", "27", "-c:a", "aac", seg]);
-          if (tc.code !== 0) throw new Error(`segmen ${i + 1} gagal diunduh`);
-        }
-      }
-      if (!seg.endsWith(".mp4")) {
-        // webm/vp9 → remux ringan ke mp4 (kalau codec tak kompatibel, ffmpeg copy gagal → transcode)
-        const mp4 = seg.replace(/\.\w+$/, ".mp4");
-        const rmx = await run(["ffmpeg", "-y", "-i", seg, "-c", "copy", "-movflags", "+faststart", mp4]);
-        if (rmx.code !== 0) {
-          const tc = await run(["ffmpeg", "-y", "-i", seg, "-c:v", "libx264", "-preset", "veryfast", "-crf", "27", "-c:a", "aac", mp4]);
-          if (tc.code !== 0) throw new Error(`konversi segmen ${i + 1} ke mp4 gagal: ` + tailErr(tc.stderr));
-        }
-        await fs.rm(seg, { force: true });
-        seg = mp4;
-      }
-      // caption karaoke: whisper pada audio segmen (timing kata akurat; segmen kecil = cepat)
-      let words: Word[] = [];
-      const awav = path.join(dir, `seg-${i}.wav`);
-      try {
-        const ax2 = await run(["ffmpeg", "-y", "-i", seg, "-vn", "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le", awav]);
-        if (ax2.code === 0) {
-          const tr2 = await run(
-            [PY, WORKER, awav, "--model", WHISPER_MODEL, "--language", WHISPER_LANG, "--threads", "2"],
-            { env: ENV }
-          );
-          if (tr2.code === 0) {
-            const wi = JSON.parse(tr2.stdout.trim().split("\n").pop() || "{}") as { segments?: Seg[] };
-            words = (wi.segments || []).flatMap((s) => s.words || []);
-          }
-        }
-      } catch { /* tanpa whisper → fallback subtitel di bawah */ }
-      await fs.rm(awav, { force: true });
-      if (!words.length && segs.length) {
-        words = synthWords(segs, p.start, p.end);
-        if (words.length) pushLog(job, "[caption] timing kata dari subtitel (whisper segmen kosong)");
-      }
       // caption karaoke ala klipers.pro: ASS word-level + font asli, dibakar ffmpeg
       let capAss = "";
       if (words.length) {
         capAss = path.join(dir, `cap-${cid}.ass`);
         await fs.writeFile(
           capAss,
-          buildAss(words, { presetId, clipStart: 0, clipEnd: p.end - p.start })
+          buildAss(words, { presetId, clipStart: p.start, clipEnd: p.end })
         );
       }
       const vf =
@@ -560,15 +278,15 @@ export async function runJob(job: Job): Promise<void> {
         (capAss
           ? `,subtitles=filename='${capAss}':fontsdir='${FONTS_DIR}'`
           : "");
+      const t0 = Date.now();
       const rr = await run([
-        "ffmpeg", "-y", "-i", seg,
+        "ffmpeg", "-y", "-ss", String(p.start), "-i", src,
         "-t", (p.end - p.start).toFixed(2),
         "-vf", vf,
         "-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
         "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "128k",
         "-movflags", "+faststart", path.join(dir, file),
       ]);
-      await fs.rm(seg, { force: true }); // hemat disk — segmen mentah tidak disimpan
       if (capAss && process.env.VL_KEEP_ASS !== "1") await fs.rm(capAss, { force: true });
       if (rr.code !== 0) throw new Error("render klip gagal: " + tailErr(rr.stderr));
       await run([
@@ -590,7 +308,6 @@ export async function runJob(job: Job): Promise<void> {
     }
     setStage(job, "render", "done");
 
-    await simpanKeDrive(job, dir, (l: string) => pushLog(job, l));
     job.status = "done";
     await persist(job);
   } catch (e) {

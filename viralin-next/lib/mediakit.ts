@@ -1,25 +1,15 @@
 /** Kotak peralatan media bersama: sumber video, whisper, TTS, render klip, LLM & gambar gratis. */
 import { promises as fs } from "fs";
-import { createWriteStream } from "fs";
 import path from "path";
-import { Readable } from "stream";
-import { pipeline } from "stream/promises";
-import { createHash } from "crypto";
+import { createHash, randomBytes } from "crypto";
 import { run, tailErr } from "./exec";
 import { buildAss, type Word } from "./captions";
+import {
+  PY, DEPS, YTDLP, ENV, WHISPER_MODEL, WHISPER_LANG, UPLOAD_DIR, FONTS_DIR, ZAI_BIN,
+} from "./config";
+import { whisperdTranscribe, isWhisperdUnavailable, type WhisperInfo } from "./whisperd";
 
-export const PY = process.env.PYTHON || "python3";
-export const DEPS = "/home/z/my-project/.deps";
-export const YTDLP = path.join(DEPS, "bin", "yt-dlp");
-export const ENV = {
-  ...process.env,
-  HF_HOME: "/home/z/my-project/.cache/huggingface",
-  PYTHONPATH: DEPS,
-};
-export const WHISPER_MODEL = process.env.VL_WHISPER_MODEL || "small";
-export const WHISPER_LANG = process.env.VL_WHISPER_LANGUAGE || "id";
-export const UPLOAD_DIR = path.join(process.cwd(), "data", "uploads");
-export const FONTS_DIR = path.join(process.cwd(), "assets", "caption-fonts");
+export { PY, DEPS, YTDLP, ENV, WHISPER_MODEL, WHISPER_LANG, UPLOAD_DIR, FONTS_DIR };
 
 export type Seg = { start: number; end: number; text: string; words?: Word[] };
 
@@ -33,10 +23,10 @@ async function cookieArgs(
   let p: string;
   if (cookies.includes("\n")) {
     // paste mentah → simpan sebagai file; nama stabil dari hash isinya (hindari duplikat)
+    await fs.mkdir(UPLOAD_DIR, { recursive: true }); // dulu ENOENT bila belum ada upload sama sekali
     const name =
       "paste-" + createHash("sha1").update(cookies).digest("hex").slice(0, 12) + ".txt";
     p = path.join(UPLOAD_DIR, name);
-    await fs.mkdir(UPLOAD_DIR, { recursive: true }); // data/ bisa terhapus (recycle/reset) — jangan biarkan writeFile ENOENT
     await fs.writeFile(p, cookies.replace(/\r/g, ""), "utf-8");
     log("[cookies] pakai cookies paste user");
   } else {
@@ -52,38 +42,22 @@ async function cookieArgs(
 
 const BOT_RE =
   /sign in to confirm|not a bot|age.restrict|members-only|geo-?restrict|unavailable|private video|429|too many requests/i;
-const FORMAT_RE = /requested format is not available/i;
-
-/** Runtime JS untuk solver challenge yt-dlp (EJS) — sejak yt-dlp 2025+ wajib ada,
- *  kalau tidak n-challenge gagal → seluruh stream video/audio "missing URL"
- *  (sisa cuma storyboard) → "Requested format is not available".
- *  yt-dlp hanya mengaktifkan deno secara default; node harus opt-in eksplisit. */
-async function jsRuntimeArgs(): Promise<string[]> {
-  const exists = (p: string) => fs.stat(p).then(() => true).catch(() => false);
-  const deno = ["/home/z/my-project/pot-provider/deno", "/usr/local/bin/deno", "/usr/bin/deno"];
-  for (const p of deno) if (await exists(p)) return ["--js-runtimes", `deno:${p}`];
-  const node = ["/usr/bin/node", "/usr/local/bin/node"];
-  for (const p of node) if (await exists(p)) return ["--js-runtimes", `node:${p}`];
-  return [];
-}
 
 /** yt-dlp dengan cookies opsional + fallback client YouTube (anti bot-check).
  *  args: flag khusus pemanggil (mis. ["-q","-o",src]); URL ditambahkan di akhir.
- *  Return label client yang berhasil + stdout (untuk --print metadata). */
-export async function ytdlpRun(
+ *  Return label client yang berhasil. */
+export async function ytdlpFetch(
   args: string[],
   url: string,
   cookies: string | undefined,
   log: (l: string) => void,
   onLine?: (l: string) => void
-): Promise<{ client: string; stdout: string }> {
+): Promise<string> {
   const ck = await cookieArgs(cookies, log);
   // proxy opsional (residential) — YouTube memblokir stream dari IP data center
   const px = process.env.VL_PROXY ? ["--proxy", process.env.VL_PROXY] : [];
-  if (px.length && process.env.VL_PROXY) await probeProxy(process.env.VL_PROXY, log);
   // PYTHONPATH=.deps → yt-dlp menemukan plugin PO-token (bgutil) + pot server di :4416
   const env = { ...process.env, PYTHONPATH: DEPS };
-  const js = await jsRuntimeArgs();
   const tries: string[][] = [
     [...px, ...ck],
     [...px, ...ck, "--extractor-args", "youtube:player_client=tv"],
@@ -93,61 +67,20 @@ export async function ytdlpRun(
   ];
   let last = "";
   for (let i = 0; i < tries.length; i++) {
-    const r = await run([YTDLP, "--no-playlist", ...js, ...tries[i], ...args, url], { onLine, env });
+    const r = await run([YTDLP, "--no-playlist", ...tries[i], ...args, url], { onLine, env });
     last = r.stderr;
-    if (r.code === 0) return {
-      client: i === 0 ? "default" : "youtube:" + tries[i][tries[i].length - 1],
-      stdout: r.stdout,
-    };
-    // error bot-check ATAU format kosong (client tanpa stream, mis. eksperimen SABR) → coba client berikutnya
-    if (!BOT_RE.test(r.stderr) && !FORMAT_RE.test(r.stderr)) break;
+    if (r.code === 0) return i === 0 ? "default" : "youtube:" + tries[i][tries[i].length - 1];
+    if (!BOT_RE.test(r.stderr)) break; // error bukan batasan akses — jangan diulang
     if (i < tries.length - 1) {
-      log(`[sumber] YouTube menolak akses / format kosong → coba varian client ${i + 2}/${tries.length}…`);
+      log(`[sumber] YouTube menolak akses (bot-check) → coba varian client ${i + 2}/${tries.length}…`);
     }
   }
-  const viaProxy = px.length > 0;
   throw new Error(
     "unduh gagal (yt-dlp): " + tailErr(last) +
-    (viaProxy
-      ? " — via VL_PROXY tetap ditolak YouTube: exit-IP proxy-mu kemungkinan juga data center. " +
-        "Pakai proxy residential/ISP (cek: curl -x $VL_PROXY https://api.ipify.org). " +
-        "Alternatif paling andal: cookies.txt di form (bagian Cookies)."
-      : " — YouTube memverifikasi IP data center (teruji: 12 varian client ditolak tanpa cookies). " +
-        "Solusi paling andal: cookies.txt di form (bagian Cookies). " +
-        "Tanpa cookies: tulis VL_PROXY=http://user:pass@host:port (harus residential) di deploy/env lalu restart server.")
+    " — YouTube/TikTok sering minta verifikasi dari IP data center. " +
+    "Solusi: pakai URL file .mp4 langsung, ATAU unggah cookies.txt di form (bagian Cookies). " +
+    "Kalau tetap tak ada stream (blokir level IP data center): nyalakan server dengan proxy residential — VL_PROXY=http://user:pass@host:port"
   );
-}
-
-/** Preflight proxy — sekali per proses: cek proxy bisa dihubungi + catat exit-IP. */
-let proxyProbed: string | null | undefined; // undefined = belum, null = gagal
-async function probeProxy(px: string, log: Log): Promise<void> {
-  if (proxyProbed !== undefined) return;
-  const safe = px.replace(/'/g, "");
-  const r = await run(["bash", "-c",
-    `curl -s --max-time 12 -x '${safe}' https://api.ipify.org 2>&1 || true`]);
-  const ip = (r.stdout || "").trim();
-  if (r.code === 0 && /^\d+\.\d+\.\d+\.\d+$/.test(ip)) {
-    const masked = ip.split(".").slice(0, 2).join(".") + ".x.x";
-    log(`[proxy] VL_PROXY aktif — exit-IP ${masked}`);
-    proxyProbed = ip;
-  } else {
-    proxyProbed = null;
-    throw new Error(
-      `VL_PROXY tidak bisa dihubungi (${px.replace(/:[^:@/]*@/, ":***@")}) — cek host/port/kredensial. ` +
-      "Uji manual: curl -x $VL_PROXY https://api.ipify.org"
-    );
-  }
-}
-
-/** Wrapper kompatibel: hanya butuh label client. */
-export async function ytdlpFetch(
-  args: string[],
-  url: string,
-  cookies: string | undefined,
-  log: (l: string) => void,
-  onLine?: (l: string) => void
-): Promise<string> {
-  return (await ytdlpRun(args, url, cookies, log, onLine)).client;
 }
 
 /** Ambil sumber: unduh via yt-dlp, atau salin dari hasil upload (<uploadId>:nama). */
@@ -171,66 +104,17 @@ export async function getSource(
     if (!/^https?:\/\//i.test(ref)) throw new Error("sumber harus URL http(s) atau upload");
     src = path.join(dir, "source.mp4");
     log("[sumber] mengunduh via yt-dlp…");
-    // video panjang: --max-filesize 500M menggagalkan unduhan penuh → pangkas ke 10 menit pertama
-    const extra: string[] = [];
     try {
-      const exists = (p: string) => fs.stat(p).then(() => true).catch(() => false);
-      const deno = ["/home/z/my-project/pot-provider/deno", "/usr/local/bin/deno", "/usr/bin/deno"];
-      const node = ["/usr/bin/node", "/usr/local/bin/node"];
-      const jsr: string[] = [];
-      for (const p of deno) if (await exists(p)) { jsr.push("--js-runtimes", `deno:${p}`); break; }
-      if (!jsr.length) for (const p of node) if (await exists(p)) { jsr.push("--js-runtimes", `node:${p}`); break; }
-      const px = process.env.VL_PROXY ? ["--proxy", process.env.VL_PROXY] : [];
-      const ck = await cookieArgs(cookies, log);
-      const pr = await run(
-        [YTDLP, "--no-playlist", ...jsr, ...px, ...ck, "--print", "%(duration)s", ref],
-        { env: { ...process.env, PYTHONPATH: DEPS } }
-      );
-      const d = parseFloat(((pr.stdout || "").trim().split("\n").pop() || "").trim());
-      if (Number.isFinite(d) && d > 900) {
-        extra.push("--download-sections", "*0-600");
-        log(`[sumber] video ${Math.round(d / 60)} menit — batas demo 500MB → 10 menit pertama saja`);
-      }
-    } catch { /* durasi tak diketahui → unduh tanpa pemangkasan */ }
-    try {
-      const client = await ytdlpFetch(["-q", "--max-filesize", "500M", ...extra, "-o", src], ref, cookies, log);
+      const client = await ytdlpFetch(["-q", "--max-filesize", "500M", "-o", src], ref, cookies, log);
       log("[sumber] unduhan selesai" + (client === "default" ? "" : ` (client ${client})`));
     } catch (e) {
       // toleransi lama: yt-dlp exit≠0 tapi file utuh sudah ada → lanjut
-      if (await fs.stat(src).then(() => true).catch(() => false)) {
-        log("[sumber] warning yt-dlp diabaikan — file sudah tersimpan");
-      } else if (process.env.VL_REMOTE_WORKER) {
-        // fallback terakhir tanpa cookies/proxy: remote worker di IP residential milik pengguna
-        await workerFetch(ref, src, log);
-      } else {
-        throw e;
-      }
+      if (!(await fs.stat(src).then(() => true).catch(() => false))) throw e;
+      log("[sumber] warning yt-dlp diabaikan — file sudah tersimpan");
     }
   }
   const dur = await probeDur(src);
   return { src, dur, title };
-}
-
-/** Unduh via remote worker (scripts/remote-worker.py di PC pengguna, IP residential). */
-async function workerFetch(ref: string, src: string, log: (l: string) => void): Promise<void> {
-  const base = (process.env.VL_REMOTE_WORKER || "").replace(/\/+$/, "");
-  log("[sumber] yt-dlp diblokir IP data center → coba remote worker…");
-  let r: Response;
-  try {
-    r = await fetch(`${base}/fetch?url=${encodeURIComponent(ref)}`, {
-      headers: process.env.VL_WORKER_TOKEN ? { "X-Worker-Token": process.env.VL_WORKER_TOKEN } : {},
-      signal: AbortSignal.timeout(1800_000),
-    });
-  } catch (e) {
-    throw new Error(`remote worker tak bisa dihubungi (${base}): ${(e as Error).message}`);
-  }
-  if (!r.ok || !(r.headers.get("content-type") || "").startsWith("video/")) {
-    const body = (await r.json().catch(() => null)) as { error?: string } | null;
-    throw new Error(`remote worker juga gagal: ${body?.error || `HTTP ${r.status}`}`);
-  }
-  await pipeline(Readable.fromWeb(r.body as unknown as import("stream/web").ReadableStream), createWriteStream(src));
-  const size = (await fs.stat(src)).size;
-  log(`[sumber] remote worker sukses — ${(size / 1e6).toFixed(1)} MB diterima`);
 }
 
 export async function probeDur(src: string): Promise<number> {
@@ -251,21 +135,37 @@ export async function extractAudio(src: string, dir: string, seconds?: number): 
   return wav;
 }
 
-/** Transkripsi whisper → segmen + kata ber-timestamp. */
+/** Ringkas hasil transkripsi ke log. */
+function logTranscribeInfo(log: (l: string) => void, info: WhisperInfo): void {
+  const nWords = info.segments.reduce((a, s) => a + (s.words?.length ?? 0), 0);
+  log(`[whisper] bahasa=${info.language} · ${info.segments.length} segmen · ${nWords} kata`);
+}
+
+/** Transkripsi whisper → segmen + kata ber-timestamp.
+ *  Jalur cepat: resident worker (model dimuat sekali per proses, hemat 3–6s per panggilan).
+ *  Bila worker tak tersedia → fallback ke spawn per-proses (worker/transcribe.py). */
 export async function transcribe(
   wav: string,
   dir: string,
   log: (l: string) => void
-): Promise<{ lang: string; duration: number; segments: Seg[] }> {
+): Promise<{ language: string; duration: number; segments: Seg[] }> {
+  log(`[whisper] transkripsi dimulai (model ${WHISPER_MODEL})…`);
+  try {
+    const info = await whisperdTranscribe(wav, (l) => l.startsWith("[whisper]") && log(l));
+    logTranscribeInfo(log, info);
+    return info;
+  } catch (e) {
+    if (!isWhisperdUnavailable(e)) throw e; // error transkripsi murni — jangan diulang
+    log("[whisper] resident worker tak tersedia → fallback spawn per-proses");
+  }
   const worker = path.join(process.cwd(), "worker", "transcribe.py");
   log(`[whisper] memuat model ${WHISPER_MODEL} & transkripsi…`);
   const r = await run([
     PY, worker, wav, "--model", WHISPER_MODEL, "--language", WHISPER_LANG, "--threads", "2",
   ], { env: ENV, timeout: 900_000 });
   if (r.code !== 0) throw new Error("whisper gagal: " + tailErr(r.stderr));
-  const info = JSON.parse(r.stdout) as { language: string; duration: number; segments: Seg[] };
-  const nWords = info.segments.reduce((a, s) => a + (s.words?.length ?? 0), 0);
-  log(`[whisper] bahasa=${info.language} · ${info.segments.length} segmen · ${nWords} kata`);
+  const info = JSON.parse(r.stdout) as WhisperInfo;
+  logTranscribeInfo(log, info);
   return info;
 }
 
@@ -288,42 +188,41 @@ export async function ttsSynth(
   if (r.code !== 0) throw new Error("edge-tts gagal: " + tailErr(r.stderr));
 }
 
-/** Render klip 9:16 + caption karaoke ala klipers (dipakai klip-ai & atur-manual & konten). */
+/** Render klip 9:16 + caption karaoke ala klipers (dipakai klip-ai & atur-manual).
+ *  File .ass ditulis SEBELUM render dan DIHAPUS sesudahnya — dulu ada race:
+ *  setTimeout hapus 60 detik bisa menyambar saat render masih >60s (caption hilang). */
 export async function renderKlip(opts: {
   src: string; out: string; start: number; end: number;
   words?: Word[]; presetId: string; vertical?: boolean; positionY?: number;
 }): Promise<void> {
-  const vf =
-    (opts.vertical !== false ? "crop=w='trunc(min(iw,ih*9/16)/2)*2':h=ih," : "") +
-    "scale=540:960" +
-    (opts.words?.length
-      ? `,subtitles=filename='${await writeAss(opts, process.cwd())}':fontsdir='${FONTS_DIR}'`
-      : "");
-  const r = await run([
-    "ffmpeg", "-y", "-hide_banner", "-ss", String(opts.start), "-i", opts.src,
-    "-t", String(Math.max(opts.end - opts.start, 1)),
-    "-vf", vf, "-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
-    "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart", opts.out,
-  ]);
-  if (r.code !== 0) throw new Error("render gagal: " + tailErr(r.stderr));
-}
-
-async function writeAss(
-  opts: { words: Word[]; start: number; end: number; presetId: string; positionY?: number },
-  dir: string
-): Promise<string> {
-  const assPath = path.join(dir, "data", "tmp-ass-" + Math.random().toString(36).slice(2, 8) + ".ass");
-  await fs.writeFile(
-    assPath,
-    buildAss(opts.words, {
-      presetId: opts.presetId,
-      clipStart: opts.start,
-      clipEnd: opts.end,
-      positionY: opts.positionY,
-    })
-  );
-  setTimeout(() => void fs.rm(assPath, { force: true }), 60_000);
-  return assPath;
+  let assPath: string | null = null;
+  if (opts.words?.length) {
+    assPath = path.join(path.dirname(opts.out), `cap-${randomBytes(3).toString("hex")}.ass`);
+    await fs.writeFile(
+      assPath,
+      buildAss(opts.words, {
+        presetId: opts.presetId,
+        clipStart: opts.start,
+        clipEnd: opts.end,
+        positionY: opts.positionY,
+      })
+    );
+  }
+  try {
+    const vf =
+      (opts.vertical !== false ? "crop=w='trunc(min(iw,ih*9/16)/2)*2':h=ih," : "") +
+      "scale=540:960" +
+      (assPath ? `,subtitles=filename='${assPath}':fontsdir='${FONTS_DIR}'` : "");
+    const r = await run([
+      "ffmpeg", "-y", "-hide_banner", "-ss", String(opts.start), "-i", opts.src,
+      "-t", String(Math.max(opts.end - opts.start, 1)),
+      "-vf", vf, "-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
+      "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart", opts.out,
+    ]);
+    if (r.code !== 0) throw new Error("render gagal: " + tailErr(r.stderr));
+  } finally {
+    if (assPath) await fs.rm(assPath, { force: true });
+  }
 }
 
 /* ── AI gratis via CLI z-ai (chat GLM, image gen) ─────────────────────── */
@@ -331,7 +230,7 @@ async function writeAss(
 export async function zaiChat(system: string, prompt: string, log?: (l: string) => void): Promise<string> {
   const out = path.join("/tmp", "vl-llm-" + Math.random().toString(36).slice(2, 8) + ".json");
   log?.("[ai] memanggil LLM gratis (z-ai)…");
-  const r = await run(["z-ai", "chat", "-p", prompt, ...(system ? ["-s", system] : []), "-o", out], {
+  const r = await run([ZAI_BIN, "chat", "-p", prompt, ...(system ? ["-s", system] : []), "-o", out], {
     timeout: 240_000,
   });
   if (r.code !== 0) throw new Error("z-ai chat gagal: " + tailErr(r.stderr));
@@ -339,62 +238,6 @@ export async function zaiChat(system: string, prompt: string, log?: (l: string) 
   await fs.rm(out, { force: true });
   const j = JSON.parse(raw) as { choices?: Array<{ message?: { content?: string } }> };
   return (j.choices?.[0]?.message?.content || "").trim();
-}
-
-/* ── LLM utama: Coarena (https://coarena.ai, OpenAI-compatible) ──────────
- * Key hanya di .env.local (di-gitignore): COARENA_API_KEY / COARENA_MODEL /
- * COARENA_BASE_URL. Tanpa key → llmChat otomatis jatuh ke z-ai CLI.      */
-
-export function coarenaConfigured(): boolean {
-  return !!process.env.COARENA_API_KEY;
-}
-
-/** Chat completion Coarena — balas teks konten (fallback reasoning_content utk model reasoning). */
-export async function coarenaChat(system: string, prompt: string, log?: (l: string) => void): Promise<string> {
-  const base = (process.env.COARENA_BASE_URL || "https://coarena.ai/api/v1").replace(/\/$/, "");
-  const model = process.env.COARENA_MODEL || "deepseek-v4-1-flash-1017";
-  log?.(`[ai] coarena ${model}…`);
-  const body = JSON.stringify({
-    model,
-    messages: [...(system ? [{ role: "system", content: system }] : []), { role: "user", content: prompt }],
-    max_tokens: 2500,
-    temperature: 0.8,
-  });
-  const r = await run(["curl", "-s", "--max-time", "180", `${base}/chat/completions`,
-    "-H", `Authorization: Bearer ${process.env.COARENA_API_KEY}`,
-    "-H", "Content-Type: application/json", "--data-binary", body], { timeout: 200_000 });
-  let d: {
-    id?: string; error?: { message?: string }; choices?: Array<{ message?: { content?: string | null; reasoning_content?: string | null } }>;
-  };
-  try { d = JSON.parse(r.stdout); } catch { throw new Error("coarena: balasan tidak valid — " + tailErr(r.stderr || r.stdout)); }
-  if (d.error) throw new Error(`coarena: ${d.error.message || "error tanpa pesan"}`);
-  const m = d.choices?.[0]?.message || {};
-  const text = String(m.content || m.reasoning_content || "").trim();
-  if (!text) throw new Error("coarena: konten kosong (model geo-block / gagal generasi?)");
-  void rateReply(d.id).catch(() => {}); // rating best-effort — tak pernah menggagalkan job
-  return text;
-}
-
-/** POST /feedback — rate reply (rating "up"); butuh request_id dari id reply. */
-async function rateReply(requestId?: string): Promise<void> {
-  if (!requestId || !process.env.COARENA_API_KEY) return;
-  const base = (process.env.COARENA_BASE_URL || "https://coarena.ai/api/v1").replace(/\/$/, "");
-  await run(["curl", "-s", "--max-time", "20", "-X", "POST", `${base}/feedback`,
-    "-H", `Authorization: Bearer ${process.env.COARENA_API_KEY}`,
-    "-H", "Content-Type: application/json",
-    "--data-binary", JSON.stringify({ request_id: requestId, rating: "up" })], { timeout: 30_000 });
-}
-
-/** LLM unified: Coarena kalau dikonfigurasi → gagal? jatuh ke z-ai CLI. */
-export async function llmChat(system: string, prompt: string, log?: (l: string) => void): Promise<string> {
-  if (coarenaConfigured()) {
-    try {
-      return await coarenaChat(system, prompt, log);
-    } catch (e) {
-      log?.(`[ai] coarena gagal — ${String((e as Error).message).slice(0, 160)} → fallback z-ai CLI`);
-    }
-  }
-  return zaiChat(system, prompt, log);
 }
 
 /** Ambil objek JSON dari balasan LLM (tahan markdown fence). */
@@ -414,7 +257,7 @@ export function extractJson<T>(s: string): T {
 
 export async function zaiImage(prompt: string, out: string, log?: (l: string) => void): Promise<void> {
   log?.("[ai] membuat gambar (z-ai image)…");
-  const r = await run(["z-ai", "image", "-p", prompt, "-o", out], { timeout: 240_000 });
+  const r = await run([ZAI_BIN, "image", "-p", prompt, "-o", out], { timeout: 240_000 });
   if (r.code !== 0 || !(await fs.stat(out).then(() => true).catch(() => false))) {
     throw new Error("z-ai image gagal: " + tailErr(r.stderr));
   }

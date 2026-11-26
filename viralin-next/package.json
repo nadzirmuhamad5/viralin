@@ -9,18 +9,15 @@
     "start": "next start"
   },
   "dependencies": {
-    "@remotion/bundler": "^4.0.546",
     "@remotion/captions": "^4.0.547",
     "@remotion/google-fonts": "^4.0.547",
     "@remotion/media-utils": "^4.0.547",
     "@remotion/paths": "^4.0.547",
-    "@remotion/player": "^4.0.546",
-    "@remotion/renderer": "^4.0.546",
     "lucide-react": "^1.80.0",
     "next": "^16",
     "react": "^19",
     "react-dom": "^19",
-    "remotion": "^4.0.546"
+    "tailwindcss-animate": "^1.0.7"
   },
   "devDependencies": {
     "@types/node": "^24",
