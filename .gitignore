@@ -25,3 +25,6 @@ __pycache__/
 
 # kredensial lokal — jangan pernah di-push
 .env
+
+# skill eksternal motion graphics di .agent/skills — sengaja di-track (melawan rule skills/ di atas)
+!.agent/skills/
