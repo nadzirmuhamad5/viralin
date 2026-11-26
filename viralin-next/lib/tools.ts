@@ -153,13 +153,17 @@ export const TOOLS: ToolDef[] = [
     id: "ragebait", name: "Rage Bait Studio", icon: "🔥", group: "AI Generatif", badge: "NEW", live: true,
     desc: "Short rage bait ala kreator YouTube ID: hook provokatif + 3 momen nyebelin bernomor, ilustrasi komik AI, narasi gue/lu, karaoke merah, TTS pace cepat. Preset rage terkunci — tinggal isi topik.",
     fields: [
-      { key: "topik", label: "Topik yang bikin darah naik", type: "text", required: true,
+      { key: "topik", label: "Topik yang bikin darah naik (kalau kosong, pakai naskah)", type: "text",
         placeholder: "penumpang angkot paling nyebelin" },
+      { key: "naskah", label: "Atau naskah sendiri (1 baris = 1 blok: hook, momen…, cta)", type: "textarea",
+        placeholder: "INI YANG BIKIN DARAH NAIK\nMomen pertama nyebelin…\nMomen kedua makin parah…\nFOLLOW SEKARANG" },
       { key: "voice", label: "Suara", type: "select", default: "id-ID-ArdiNeural",
         options: [
           { value: "id-ID-ArdiNeural", label: "Ardi — Pria 🇮🇩" },
           { value: "id-ID-GadisNeural", label: "Gadis — Wanita 🇮🇩" },
-        ] },
+          { value: "en-US-AndrewMultilingualNeural", label: "Andrew — multibahasa" },
+          { value: "en-US-AvaMultilingualNeural", label: "Ava — multibahasa" },
+        ], hint: "dibacakan cepat +12% — pace khas shorts rage bait" },
     ],
   },
   {
@@ -210,6 +214,11 @@ export const TOOLS: ToolDef[] = [
           { value: "id-ID-ArdiNeural", label: "Ardi — Pria 🇮🇩" },
           { value: "id-ID-GadisNeural", label: "Gadis — Wanita 🇮🇩" },
         ] },
+      { key: "simpanDrive", label: "Storage hasil", type: "select", default: "tidak",
+        options: [
+          { value: "tidak", label: "Simpan di server (download dari sini)" },
+          { value: "ya", label: "Upload ke Google Drive juga (butuh VL_GDRIVE_* di deploy/env)" },
+        ], hint: "Link share Drive muncul di panel hasil job" },
     ],
   },
   {

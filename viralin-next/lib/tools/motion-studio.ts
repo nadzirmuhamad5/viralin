@@ -13,6 +13,7 @@ import path from "path";
 import * as mk from "../mediakit";
 import { run as runCmd, tailErr } from "../exec";
 import { motionSectionDurs, type MotionStudioProps, type WarnaId } from "../motion";
+import { gdriveConfigured, gdriveUpload } from "../storage-drive";
 import type { ToolCtx } from "./_shared";
 
 /** Bundle Remotion di-cache lintas job (entry remotion/index.ts + publicDir). */
@@ -256,7 +257,25 @@ export async function run(ctx: ToolCtx): Promise<void> {
     else log(`[mux] narasi gagal di-gabung — video tetap tanpa suara (${tailErr(m.stderr).slice(0, 80)})`);
   }
   const st = await fs.stat(out);
-  job.files!.push({ file: "motion-studio.mp4", label: `Motion Studio — ${judul}`, kind: "video" });
+  // simpanDrive "ya" + kredensial VL_GDRIVE_* terpasang → upload hasil ke Google
+  // Drive; link share muncul di panel hasil job (JobPanel membaca files[].link)
+  let driveLink = "";
+  if ((inputs.simpanDrive || "tidak") === "ya") {
+    if (gdriveConfigured()) {
+      try {
+        driveLink = await gdriveUpload(out, `motion-studio-${judul.toLowerCase().replace(/\s+/g, "-")}.mp4`, log);
+        log(`[drive] hasil di-upload → ${driveLink}`);
+      } catch (e) {
+        log(`[drive] upload gagal — hasil tetap di server (${String((e as Error)?.message || e).slice(0, 70)})`);
+      }
+    } else {
+      log("[drive] VL_GDRIVE_* belum diset di env — hasil tetap di server");
+    }
+  }
+  job.files!.push({
+    file: "motion-studio.mp4", label: `Motion Studio — ${judul}`, kind: "video",
+    ...(driveLink ? { link: driveLink } : {}),
+  });
   job.title = `Motion Studio (Remotion) — ${judul}`;
   log(`[remotion] jadi (${(st.size / 1e6).toFixed(2)} MB)`);
 }

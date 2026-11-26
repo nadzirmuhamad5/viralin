@@ -328,7 +328,7 @@ export default function Home() {
         <section className="wrap sec">
           <h2 className="sec-h">Riwayat job</h2>
           <div>
-            {jobs.slice(0, 8).map((j) => (
+            {jobs.slice(0, 24).map((j) => (
               <div
                 className="jrow"
                 key={j.id}

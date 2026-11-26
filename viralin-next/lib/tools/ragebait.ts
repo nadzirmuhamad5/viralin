@@ -157,11 +157,26 @@ function overlays(i: number, total: number, sc: Scene, isHook: boolean, isCta: b
 export async function run(ctx: ToolCtx): Promise<void> {
   const { job, dir, inputs, log } = ctx;
   const topik = (inputs.topik || "").trim();
-  if (!topik) throw new Error("isi topik rage dulu (mis. 'penumpang angkot gila hape')");
+  const naskahIn = (inputs.naskah || "").trim();
+  if (!topik && !naskahIn) throw new Error("isi topik ATAU naskah rage dulu (mis. 'penumpang angkot gila hape')");
   const voice = inputs.voice || "id-ID-ArdiNeural";
 
-  // 1) Naskah LLM: hook + 3 momen + cta
-  const script = await genScript(topik, log);
+  // 1) Naskah: tulisan sendiri (field naskah) ATAU LLM dari topik — hook + momen + cta.
+  //    Naskah sendiri dipotong per baris: baris pertama = hook, terakhir = CTA,
+  //    sisanya momen. Title overlay = potongan awal blok (uppercase pendek).
+  const blockScene = (b: string): Scene => ({
+    title: b.split(/\s+/).slice(0, 6).join(" ").toUpperCase().slice(0, 42),
+    text: b,
+    scene: "ilustrasi komik flat warna mencolok, adegan sesuai kalimat, tanpa teks",
+  });
+  const script = naskahIn
+    ? (() => {
+        const blocks = naskahIn.split(/\n+/).map((s) => s.trim()).filter(Boolean);
+        if (blocks.length < 3) throw new Error("naskah minimal 3 baris: hook, momen (≥1), cta");
+        log(`[naskah] pakai naskah sendiri — ${blocks.length} blok (hook + ${blocks.length - 2} momen + cta)`);
+        return { hook: blockScene(blocks[0]), moments: blocks.slice(1, -1).map(blockScene), cta: blockScene(blocks[blocks.length - 1]) } as RageScript;
+      })()
+    : await genScript(topik, log);
   const scenes: Array<{ sc: Scene; isHook: boolean; isCta: boolean }> = [
     { sc: script.hook, isHook: true, isCta: false },
     ...script.moments.map((m) => ({ sc: m, isHook: false, isCta: false })),
