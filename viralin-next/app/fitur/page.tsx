@@ -4,11 +4,13 @@ import { TOOLS } from "@/lib/tools";
 const GROUPS = ["Kliping AI", "Editor & Komposisi", "AI Generatif", "SEO & Analitik", "Distribusi"] as const;
 
 export default function FiturPage() {
+  const live = TOOLS.filter((t) => t.live).length;
+  const pro = TOOLS.length - live;
   return (
     <section className="wrap sec">
-      <h1 className="sec-h">Semua Fitur (20 tool)</h1>
+      <h1 className="sec-h">Semua Fitur ({TOOLS.length} tool)</h1>
       <p className="sec-sub">
-        17 tool benar-benar jalan di server ini (stack gratis) — 3 ditandai PRO butuh infra
+        {live} tool benar-benar jalan di server ini (stack gratis) — {pro} ditandai PRO butuh infra
         berbayar dan tidak dipalsukan. Klik kartu untuk buka halaman tool-nya.
       </p>
       {GROUPS.map((g) => (
