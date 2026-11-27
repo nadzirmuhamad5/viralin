@@ -1,5 +1,5 @@
 /** Penjadwal berita harian → bikin job motion-studio mode "berita".
- *  Dipanggil instrumentation.ts (boot + interval 20 mnt) dan route /api/berita/tick. */
+ *  Dipanggil instrumentation.ts (boot + interval 20 mnt). */
 import { createJob, runJob } from "./pipeline";
 import { allJobs, persist } from "./store";
 import { DEFAULT_PRESET } from "./captions";

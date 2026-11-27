@@ -206,20 +206,18 @@ export async function run(ctx: ToolCtx): Promise<void> {
   // di awal proses, gambar ditulis belakangan) → arahkan renderer ke URL live dari
   // server app (/api/asset membaca disk saat request). Player browser tetap pakai
   // path relatif via staticFile (public/ Next dilayani live di sisi client).
+  // Port dari env — jangan hardcode 3000 (platform/VPS bisa pakai port lain).
+  const assetPort = process.env.PORT || "3000";
   let renderProps = props;
   if (props.imgs) {
     renderProps = {
       ...props,
-      imgs: (props.imgs || "").split("\n").map((p) => (p ? `http://127.0.0.1:3000/api/asset/${p}` : "")).join("\n"),
+      imgs: (props.imgs || "").split("\n").map((p) => (p ? `http://127.0.0.1:${assetPort}/api/asset/${p}` : "")).join("\n"),
     };
   }
   log(`[remotion] hook "${judul}" · ${items.length} poin · CTA "${cta}" · tema ${warna}${sfxOn ? " +sfx" : ""}`);
-  // pastikan font tersedia di public/ (recycle bisa menghapusnya — copy ulang)
-  const fontDst = path.join(process.cwd(), "public", "fonts", "Montserrat-ExtraBold.ttf");
-  if (!(await fs.stat(fontDst).catch(() => null))) {
-    await fs.mkdir(path.dirname(fontDst), { recursive: true });
-    await fs.copyFile(path.join(process.cwd(), "assets", "caption-fonts", "Montserrat-ExtraBold.ttf"), fontDst);
-  }
+  // Font di public/fonts ter-commit di repo — tidak ada copy runtime lagi.
+  // (Dulu hanya Montserrat yang dicopy, Anton tidak ke-restore habis recycle.)
   const { ensureBrowser } = await import("@remotion/renderer");
   await ensureBrowser();
   log("[remotion] chrome headless siap — bundling komposisi…");

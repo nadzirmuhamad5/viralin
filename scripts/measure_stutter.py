@@ -3,7 +3,7 @@
 (menghindari area teks/karaoke/chip). Sawtooth/pulse kasar = std tinggi + lonjakan
 periodik; zoom halus = diff rendah merata. Jalankan: python3 -I scripts/measure_stutter.py
 """
-import subprocess, tempfile, os, sys
+import subprocess, tempfile, os
 from PIL import Image
 import numpy as np
 
