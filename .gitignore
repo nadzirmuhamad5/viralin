@@ -12,6 +12,7 @@ viralin-next/data/
 
 # asset uji yang di-generate
 download/*.mp4
+viralin-next/public/konten/
 
 # RAHASIA: skrip ini memuat nilai cookies akun asli — JANGAN pernah di-commit
 scripts/make-cookies-file.py

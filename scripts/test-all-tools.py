@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
-"""Uji E2E SEMUA 17 tool live Viralin lewat API produksi.
+"""Uji E2E SEMUA 8 tool live Viralin lewat API produksi.
 Urut dari yang ringan ke berat; tiap job di-poll sampai done/fail.
-Hasil: /home/z/my-project/scripts/e2e-all-results.json + tabel di stdout."""
+Hasil: scripts/e2e-all-results.json (relatif ke folder script ini) + tabel di stdout.
+Daftar tool live saat ini (lihat viralin-next/lib/tools.ts): klip-ai, seamless-loop,
+konten-tempel, ugc-affiliate, ragebait, motion-studio, title-optimizer, viral-tips."""
 import json
 import time
 import urllib.request
+from pathlib import Path
 
 BASE = "http://127.0.0.1:3000"
 URL = "http://127.0.0.1:8080/e2e-ujian.mp4"
@@ -15,21 +18,12 @@ TESTS = [
     # (id, inputs, catatan)
     ("title-optimizer", {"judul": "mukbang seblak level 10", "platform": "tiktok"}, "LLM"),
     ("viral-tips", {"niche": "kuliner street food Jakarta"}, "LLM"),
-    ("prompt-gen", {"ide": "video produk kopi kekinian", "target": "video"}, "LLM"),
-    ("music-gen", {"mood": "lofi", "dur": "10"}, "ffmpeg"),
-    ("motion-graphic", {"judul": "UJI SEMUA TOOL", "subjudul": "test otomatis 17 tool", "warna": "green"}, "ffmpeg"),
-    ("wa-story-hd", {"source": URL}, "ffmpeg"),
     ("seamless-loop", {"source": URL, "start": "0", "dur": "4"}, "ffmpeg"),
-    ("thumbnail", {"source": URL}, "yt-dlp"),
-    ("brand-kit", {"source": URL, "logo": LOGO, "position": "tr", "opacity": "80", "scale": "18"}, "ffmpeg"),
-    ("merge-video", {"sources": f"{URL}\n{URL}", "perdur": "5"}, "ffmpeg"),
-    ("ai-image", {"prompt": "thumbnail makanan kopi susu gula aren, dramatis", "size": "1024x1024"}, "z-ai image"),
-    ("transcript", {"source": URL}, "whisper"),
-    ("highlight-bola", {"source": URL, "count": "1", "seglen": "6"}, "audio+ffmpeg"),
-    ("atur-manual", {"source": URL, "start": "5", "end": "15"}, "whisper+render"),
-    ("dubbing", {"source": URL, "voice": "id-ID-GadisNeural", "dur": "10"}, "whisper+tts"),
+    ("ragebait", {"topik": "penumpang angkot paling nyebelin"}, "LLM+tts+render"),
+    ("motion-studio", {"mode": "manual", "judul": "UJI SEMUA TOOL", "bullets": "Poin satu\nPoin dua", "cta": "FOLLOW", "ilustrasi": "tidak", "narmode": "tidak"}, "ffmpeg"),
     ("klip-ai", {"source": URL}, "pipeline penuh"),
     ("konten-tempel", {"topik": "3 fakta singkat kopi susu gula aren", "voice": "id-ID-ArdiNeural", "bg": "gradient"}, "LLM+tts+render"),
+    ("ugc-affiliate", {"source": URL, "produk": "Serum Vitamin C", "storyboard": "teks", "durasi": "30"}, "LLM+tts+render"),
 ]
 
 
@@ -81,7 +75,7 @@ def main():
     for h in hasil:
         if h["status"] != "done":
             print(f"  GAGAL {h['tool']}: {h['error']}", flush=True)
-    with open("/home/z/my-project/scripts/e2e-all-results.json", "w") as f:
+    with open(Path(__file__).resolve().parent / "e2e-all-results.json", "w") as f:
         json.dump(hasil, f, indent=1)
 
 

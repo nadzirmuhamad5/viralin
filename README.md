@@ -4,10 +4,15 @@ Demo alur **klipers.pro** dengan stack 100% gratis dan **benar-benar dieksekusi*
 `yt-dlp` · `faster-whisper` · `ffmpeg` · `edge-tts` · GLM via `z-ai` CLI.
 
 Tempel URL video → pipeline memilih momen terbaik (kepadatan ujaran + deteksi cut scene) →
-render **klip 9:16 + caption karaoke word-level** (30 preset gaya) → unduh. Plus 20 tool:
-transkrip SRT/VTT, merge, loop boomerang, WA Story HD, watermark, highlight bola (puncak
-energi audio), motion intro, konten faceless (naskah LLM → TTS → background AI → caption),
-dubbing, music prosedural, optimasi judul LLM, thumbnail, gambar AI, dsb.
+render **klip 9:16 + caption karaoke word-level** (30 preset gaya) → unduh. Total **10 tool
+(8 live + 2 PRO)**: klip-ai, loop boomerang, konten faceless, UGC tiru konten, rage bait,
+motion studio, optimasi judul LLM, dan saran viral AI. Dua fitur PRO (Split Cam, Auto Upload)
+tampil di UI tapi belum bisa jalan di demo gratis ini.
+
+> Catatan: 14 tool di-prune pada 26 Nov 2026 (`scripts/prune_tools.py`):
+> atur-manual, highlight-bola, transcript, wa-story-hd, brand-kit, motion-graphic,
+> merge-video, viral-konten, ai-image, prompt-gen, music-gen, dubbing, voice-clone,
+> thumbnail. Jangan jadikan README lama / angka "20 tool" sebagai acuan.
 
 ## Struktur
 
@@ -16,15 +21,16 @@ viralin-next/        # aplikasi Next.js 16 (App Router, TypeScript)
   app/               # halaman + API: /api/jobs (antrean + redaksi cookies), /api/jobs/<id>,
                      # /api/upload (streaming), media w/ Range (suffix range didukung)
   components/        # ToolRunner (form+polling), JobPanel (hasil)
-  lib/               # pipeline.ts (klip-ai) · tools/ (16 tool = 1 modul/file) · toolrun.ts (dispatcher tipis)
+  lib/               # pipeline.ts (klip-ai) · tools/ (7 runner + klip-ai di pipeline) · toolrun.ts (dispatcher tipis)
                      # mediakit.ts · whisperd.ts (worker whisper resident) · queue.ts (antrean konkurensi)
                      # store.ts (disk = sumber kebenaran) · captions.ts (30 preset ASS) · config.ts · exec.ts
                      # use-job-polling.ts + ui.ts (shared client)
   worker/            # whisper_server.py (resident, model dimuat sekali) + transcribe.py (fallback per-proses)
-                     # tts.py (edge-tts) · sports.py (energi)
+                     # tts.py (edge-tts)
   assets/caption-fonts/  # font libass: Anton, Bebas Neue, Archivo Black, Montserrat
 scripts/             # restart-viralin.sh, fetch-fonts.sh, make-e2e-asset.sh, probe-ytdlp.sh (probe yt-dlp
-                     # terparameterisasi), test-all-tools.py, test-cookies-flow.py, proof-ip-theory.sh
+                     # terparameterisasi), test-all-tools.py (8 tool live), test-cookies-flow.py,
+                     # proof-ip-theory.sh, prune_tools.py (daftar 14 tool yang di-prune 26 Nov 2026)
 download/            # file yang disajikan static :8080 (asset uji e2e-ujian.mp4 di-generate)
 ```
 
@@ -52,7 +58,7 @@ Lalu buka `http://127.0.0.1:3000`. API: `POST /api/jobs {tool, inputs:{...}}`, `
 
 ## YouTube dari IP data center (temuan lapangan)
 
-Tiga lapis blok, diuji sistematis (`scripts/proof-ip-theory.sh`, `scripts/probe-pot2.sh`):
+Tiga lapis blok, diuji sistematis (`scripts/proof-ip-theory.sh`, `scripts/probe-ytdlp.sh`):
 
 1. **Bot-check** "Sign in to confirm you're not a bot" → lolos dengan **cookies.txt**
    (upload ATAU **paste langsung** di form — backend menyimpannya sebagai file otomatis).
@@ -80,15 +86,13 @@ eksekusinya di IP rumah user; perintah persisnya diuji dari IP data center ini d
   default 2); antrian penuh → HTTP 429 + Retry-After. Dulu tiap POST langsung spawn
   pipeline tanpa batas (CPU/RAM mudah jebol).
 - **Keamanan** — cookies YouTube user TIDAK PERNAH keluar dari server (diredaksi di semua
-  respons API); logo Brand Kit divalidasi anti-SSRF (blokir host internal/privat + cek
-  magic bytes gambar); scoreboard drawtext di-escape penuh (termasuk `%`).
+  respons API).
 - **Type-check build aktif kembali** — `tsc --noEmit` 0 error (dulu `ignoreBuildErrors: true`).
 - **Store tahan banting** — persist atomik (tmp+rename), bacaan selalu sinkron ke disk
   (tahan hot-reload/multi-instance dev), TTL penyapu job/upload lama (`VL_TTL_HOURS`,
   default 48 jam) supaya disk tidak menumpuk tanpa batas.
-- **I/O efisien** — upload streaming ke disk (dulu buffer 200MB di RAM), merge-video
-  deduplikasi URL sama, dubbing TTS paralel (pool 4), music-gen 4 panggilan ffmpeg total
-  (dulu 1 proses per segmen chord), deteksi scene decode di 160×90 (hemat CPU 20–50×).
+- **I/O efisien** — upload streaming ke disk (dulu buffer 200MB di RAM), deteksi scene
+  decode di 160×90 (hemat CPU 20–50×).
 - **Duplikasi dibasmi** — exec/config terpusat (`lib/exec.ts` + `lib/config.ts`), tool
   pecah per-file di `lib/tools/` dengan registry statis, hook polling bersama
   (`lib/use-job-polling.ts`), 5 skrip probe yt-dlp dilebur jadi `scripts/probe-ytdlp.sh`.
@@ -113,6 +117,6 @@ eksekusinya di IP rumah user; perintah persisnya diuji dari IP data center ini d
 ## Disclaimer
 
 Demo edukasi tanpa login/pembayaran. Angka & tier harga di-capture dari klipers.pro
-(18 Nov 2026) sebagai perbandingan. 3 fitur bertanda PRO (Split Cam, Clone Suara,
+(18 Nov 2026) sebagai perbandingan. 2 fitur bertanda PRO (Split Cam,
 Auto Upload) butuh infrastruktur berbayar dan sengaja tidak dipalsukan. Patuhi ToS
 platform & hak cipta saat mengunduh/mengolah video pihak lain.
