@@ -21,7 +21,8 @@
     "react": "^19",
     "react-dom": "^19",
     "remotion": "^4.0.547",
-    "tailwindcss-animate": "^1.0.7"
+    "tailwindcss-animate": "^1.0.7",
+    "z-ai-web-dev-sdk": "^0.0.18"
   },
   "devDependencies": {
     "@types/node": "^24",
