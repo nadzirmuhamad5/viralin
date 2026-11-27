@@ -11,9 +11,16 @@
  *  NARASI (Edge TTS) durasi tiap bagian mengikuti panjang narasinya (p.durs dari
  *  server) dan detailnya muncul sebagai CAPTION KARAOKE sinkron suara (p.words
  *  dari whisper): teks besar = gambaran besar, narasi = detailnya.
- *  Dipakai bersama: <Player> di browser (live preview) DAN renderMedia di server. */
+ *  Dipakai bersama: <Player> di browser (live preview) DAN renderMedia di server.
+ *  Aturan remotion-motion-graphics yang diterapkan di sini: theme tunggal
+ *  (remotion/theme.ts, tanpa hex/easing/spring inline), easing di SEMUA
+ *  interpolate(), exit 10 frame lebih cepat dari entrance, stagger kata
+ *  3 frame, Ken Burns di gambar ilustrasi, dan 5-layer stack
+ *  (background → aset → grafis → Grade → Grain + Vignette). */
 import React from "react";
 import { AbsoluteFill, Audio, Img, Sequence, continueRender, delayRender, interpolate, spring, staticFile, useCurrentFrame, useVideoConfig } from "remotion";
+import { MOTION_THEME } from "./theme";
+import { Grade, Grain, Vignette } from "./layers";
 import {
   MOTION_CTA_START,
   PALETTES,
@@ -46,7 +53,8 @@ if (typeof document !== "undefined" && !document.fonts.check('20px "Anton VB"'))
 
 /** pseudo-random deterministik (partikel dsb. stabil antar render). */
 const rnd = (i: number) => { const x = Math.sin(i * 127.1 + 311.7) * 43758.5453; return x - Math.floor(x); };
-const GOLD = "#fbbf24", GOLD_D = "#b45309", ROSE = "#fb7185", RED = "#ef4444";
+const GOLD = MOTION_THEME.colors.gold, GOLD_D = MOTION_THEME.colors.goldDark, ROSE = MOTION_THEME.colors.rose, RED = MOTION_THEME.colors.red;
+const { ease: EASE, spring: SPRING } = MOTION_THEME;
 
 /* ═══════════════ IKON BERANIMASI PER ARKETIPE ═══════════════ */
 
@@ -66,7 +74,7 @@ const Coin: React.FC<{ x: number; y: number; r: number; op: number }> = ({ x, y,
 const SceneIcon: React.FC<{ a: AnimId; text: string; accent: string; chip: string }> = ({ a, text, accent, chip }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
-  const pop = spring({ frame, fps, config: { damping: 10, stiffness: 150, mass: 0.6 } });
+  const pop = spring({ frame, fps, config: SPRING.bouncy });
   const idle = 1 + Math.sin(frame / 9) * 0.045;
 
   const wrap = (children: React.ReactNode, extra?: React.CSSProperties): React.ReactNode => (
@@ -102,7 +110,7 @@ const SceneIcon: React.FC<{ a: AnimId; text: string; accent: string; chip: strin
       );
     }
     case "check": {
-      const draw = interpolate(frame, [6, 26], [0, 1], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
+      const draw = interpolate(frame, [6, 26], [0, 1], { extrapolateLeft: "clamp", extrapolateRight: "clamp", easing: EASE.out });
       return wrap(<>
         {[0, 1, 2, 3, 4, 5, 6, 7].map((k) => (
           <g key={k} transform={`rotate(${k * 45 + frame * 1.1})`} opacity={0.35 + 0.4 * Math.abs(Math.sin(frame / 6 + k))}>
@@ -212,7 +220,7 @@ const SceneIcon: React.FC<{ a: AnimId; text: string; accent: string; chip: strin
         <path d="M0 -34 L9 -9 L34 0 L9 9 L0 34 L-9 9 L-34 0 L-9 -9 Z" fill={accent} />
       </g>);
       const target = parseFloat(mm[1].replace(",", "."));
-      const p = interpolate(frame, [5, 44], [0, 1], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
+      const p = interpolate(frame, [5, 44], [0, 1], { extrapolateLeft: "clamp", extrapolateRight: "clamp", easing: EASE.out });
       const v = target * (1 - Math.pow(1 - p, 3));
       const show = target >= 100 ? Math.round(v) : Math.round(v * 10) / 10;
       const unit = /%/.test(text) ? "%" : "";
@@ -416,7 +424,7 @@ const Particles: React.FC<{ accent: string; dur: number }> = ({ accent, dur }) =
 const Word: React.FC<{ w: string; i: number; size: number }> = ({ w, i, size }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
-  const s = spring({ frame: frame - i * 2, fps, config: { damping: 12, stiffness: 170, mass: 0.45 } });
+  const s = spring({ frame: frame - i * 3, fps, config: SPRING.snappy });
   const floatY = Math.sin(frame / 9 + i * 1.1) * 3;
   return (
     <span style={{
@@ -432,14 +440,14 @@ const Judul: React.FC<{ text: string; accent: string; hookF: number }> = ({ text
   const { fps } = useVideoConfig();
   const text = raw.replace(/[.。]+$/, ""); // tanpa titik otomatis (Hukum #4 bang-motion)
   const size = text.length > 26 ? 38 : text.length > 16 ? 48 : 58;
-  const s = spring({ frame, fps, config: { damping: 12, stiffness: 140, mass: 0.6 } });
+  const s = spring({ frame, fps, config: SPRING.smooth });
   // Ken Burns masuk + exit keluar di akhir scene hook (bukan hard cut)
-  const zoom = interpolate(frame, [0, hookF], [1, 1.06], { extrapolateRight: "clamp", extrapolateLeft: "clamp" });
-  const exitP = interpolate(frame, [hookF - 10, hookF - 1], [0, 1], { extrapolateRight: "clamp", extrapolateLeft: "clamp" });
+  const zoom = interpolate(frame, [0, hookF], [1, 1.06], { extrapolateRight: "clamp", extrapolateLeft: "clamp", easing: EASE.inOut });
+  const exitP = interpolate(frame, [hookF - 10, hookF - 1], [0, 1], { extrapolateRight: "clamp", extrapolateLeft: "clamp", easing: EASE.in });
   const floatY = Math.sin(frame / 10) * 5;
   const y = (interpolate(s, [0, 1], [90, 0]) + floatY) * (1 - exitP) - exitP * 44;
   const scale = interpolate(s, [0, 1], [0.6, 1]) * zoom * (1 - 0.07 * exitP);
-  const lineW = interpolate(frame, [6, 30], [0, 240], { extrapolateRight: "clamp", extrapolateLeft: "clamp" }) * (1 - exitP);
+  const lineW = interpolate(frame, [6, 30], [0, 240], { extrapolateRight: "clamp", extrapolateLeft: "clamp", easing: EASE.out }) * (1 - exitP);
   const q = /\?/.test(text);
   return (
     <div style={{ position: "relative", transform: `translateY(${y}px) scale(${scale})`, opacity: Math.min(s * 2, 1) * (1 - exitP), textAlign: "center" }}>
@@ -463,9 +471,13 @@ const BulletScene: React.FC<{ t: string; a: AnimId; idx: number; accent: string;
     const frame = useCurrentFrame();
     const { fps } = useVideoConfig();
     // entrance pop + exit keluar + Ken Burns zoom — scene tidak pernah hard cut
-    const enter = spring({ frame, fps, config: { damping: 13, stiffness: 150, mass: 0.55 } });
-    const exitP = interpolate(frame, [bulletF - 10, bulletF - 1], [0, 1], { extrapolateRight: "clamp", extrapolateLeft: "clamp" });
-    const zoom = interpolate(frame, [0, bulletF], [1, 1.05], { extrapolateRight: "clamp", extrapolateLeft: "clamp" });
+    const enter = spring({ frame, fps, config: SPRING.smooth });
+    const exitP = interpolate(frame, [bulletF - 10, bulletF - 1], [0, 1], { extrapolateRight: "clamp", extrapolateLeft: "clamp", easing: EASE.in });
+    const zoom = interpolate(frame, [0, bulletF], [1, 1.05], { extrapolateRight: "clamp", extrapolateLeft: "clamp", easing: EASE.inOut });
+    /* Ken Burns gambar ilustrasi (skill remotion-motion-graphics §8):
+     * scale 1 → 1.08 + pan -25px, easing inOut — bukan zoom linear. */
+    const kbScale = interpolate(frame, [0, bulletF], [1, 1.08], { extrapolateLeft: "clamp", extrapolateRight: "clamp", easing: EASE.inOut });
+    const kbPan = interpolate(frame, [0, bulletF], [0, -25], { extrapolateLeft: "clamp", extrapolateRight: "clamp", easing: EASE.inOut });
     const floatY = Math.sin(frame / 12 + idx * 1.3) * 6;
     const op = Math.min(enter * 2, 1) * (1 - exitP);
     /* Hukum #4 bang-motion: dua adegan berturut-turut TIDAK boleh sama dalam
@@ -482,7 +494,7 @@ const BulletScene: React.FC<{ t: string; a: AnimId; idx: number; accent: string;
     const blobX = 20 + (idx % 2) * 55 + Math.sin(frame / 17 + idx * 2) * 8;
     const blobY = 16 + (idx % 3) * 26 + Math.cos(frame / 21 + idx) * 8;
     const corner = ["-150px -130px auto auto", "auto -150px -150px auto", "auto auto -140px -150px"][variant];
-    const sweep = interpolate(frame, [2, 18], [-1.2, 1.2], { extrapolateRight: "clamp", extrapolateLeft: "clamp" });
+    const sweep = interpolate(frame, [2, 18], [-1.2, 1.2], { extrapolateRight: "clamp", extrapolateLeft: "clamp", easing: EASE.out });
     const IconBox: React.FC<{ h: number }> = ({ h }) => (
       <div style={{ height: h, display: "flex", alignItems: "center", justifyContent: "center", filter: `drop-shadow(0 10px ${glow}px ${accent}66)` }}>
         <SceneIcon a={a} text={t} accent={accent} chip={chip} />
@@ -521,7 +533,7 @@ const BulletScene: React.FC<{ t: string; a: AnimId; idx: number; accent: string;
             {/* URL absolut (http…) → renderer server; relatif → staticFile (Player browser) */}
             <Img src={img.startsWith("http") ? img : staticFile(img)} style={{
               width: "100%", height: "100%", objectFit: "cover",
-              transform: `scale(${1.12 + 0.08 * Math.min(frame / Math.max(bulletF, 1), 1)})`,
+              transform: `scale(${1.12 * kbScale}) translateX(${kbPan}px)`,
               opacity: 0.85 * Math.min(enter * 2, 1) * (1 - exitP),
             }} />
             <AbsoluteFill style={{ background: `linear-gradient(180deg, ${chip}55 0%, ${chip}d9 100%)` }} />
@@ -583,7 +595,7 @@ const BulletScene: React.FC<{ t: string; a: AnimId; idx: number; accent: string;
 const Cta: React.FC<{ text: string; accent: string }> = ({ text, accent }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
-  const s = spring({ frame, fps, config: { damping: 10, stiffness: 160, mass: 0.5 } });
+  const s = spring({ frame, fps, config: SPRING.bouncy });
   const pulse = 1 + Math.sin(frame / 4) * 0.035;
   const shine = ((frame % 42) / 42) * 520 - 220;
   const bob = Math.sin(frame / 4) * 7;
@@ -624,7 +636,20 @@ const Cta: React.FC<{ text: string; accent: string }> = ({ text, accent }) => {
 /** Kata narasi {w: teks, s/e: detik absolut} — dari whisper di server. */
 type NarWord = { w: string; s: number; e: number };
 
-const CAP_FONT = '"Anton VB", "Anton", Impact, sans-serif';
+/** Bentuk @remotion/captions (skill remotion-captions): semua caption diproses
+ *  sebagai JSON dalam milidetik. NarWord server (detik) dikonversi ke sini
+ *  di NarrCaption, supaya timing aktif mengikuti format Caption resmi. */
+type CaptionWord = { text: string; startMs: number; endMs: number; timestampMs: number | null; confidence: number | null };
+const toCaptionWords = (words: NarWord[]): CaptionWord[] =>
+  words.map((w) => ({
+    text: w.w,
+    startMs: Math.round(w.s * 1000),
+    endMs: Math.round(w.e * 1000),
+    timestampMs: Math.round(((w.s + w.e) / 2) * 1000),
+    confidence: null,
+  }));
+
+const CAP_FONT = MOTION_THEME.fonts.caption;
 
 /** Caption karaoke gaya Hormozi: window geser 4 kata, kata aktif warna tema
  *  + pop + glow — sinkron dgn voice-over Edge TTS (timing whisper). */
@@ -633,13 +658,16 @@ const NarrCaption: React.FC<{ words: NarWord[]; start: number; end: number; acce
     const frame = useCurrentFrame();
     const { fps } = useVideoConfig();
     if (!words.length) return null;
-    const t = start + frame / fps; // frame LOKAL Sequence → detik absolut
-    const inScene = words.filter((w) => w.e > start + 0.01 && w.s < end - 0.01);
+    const tMs = (start + frame / fps) * 1000; // frame LOKAL Sequence → ms absolut
+    const startMs = start * 1000;
+    const endMs = end * 1000;
+    const caps = toCaptionWords(words);
+    const inScene = caps.filter((w) => w.endMs > startMs + 10 && w.startMs < endMs - 10);
     if (!inScene.length) return null;
     let act = -1;
     for (let i = 0; i < inScene.length; i++) {
-      if (t >= inScene[i].s && t < inScene[i].e) { act = i; break; }
-      if (inScene[i].e <= t) act = i; // gap antar kata → kata terakhir tetap tampil
+      if (tMs >= inScene[i].startMs && tMs < inScene[i].endMs) { act = i; break; }
+      if (inScene[i].endMs <= tMs) act = i; // gap antar kata → kata terakhir tetap tampil
     }
     if (act < 0) return null;
     const win = inScene.slice(Math.max(0, act), act + 4);
@@ -650,7 +678,7 @@ const NarrCaption: React.FC<{ words: NarWord[]; start: number; end: number; acce
         flexWrap: "wrap", justifyContent: "center", gap: "2px 9px", pointerEvents: "none",
       }}>
         {win.map((w, k) => {
-          const pop = spring({ frame: frame - (k - off) * 2, fps, config: { damping: 12, stiffness: 190, mass: 0.4 } });
+          const pop = spring({ frame: frame - (k - off) * 3, fps, config: SPRING.snappy });
           const isAct = k === off;
           const done = k < off;
           return (
@@ -661,7 +689,7 @@ const NarrCaption: React.FC<{ words: NarWord[]; start: number; end: number; acce
               transformOrigin: "center bottom",
               WebkitTextStroke: "2.4px #000", paintOrder: "stroke fill",
               textShadow: isAct ? `0 0 22px ${accent}66, 0 4px 16px rgba(0,0,0,.6)` : "0 4px 16px rgba(0,0,0,.6)",
-            }}>{w.w}</span>
+            }}>{w.text}</span>
           );
         })}
       </div>
@@ -670,9 +698,34 @@ const NarrCaption: React.FC<{ words: NarWord[]; start: number; end: number; acce
 
 /* ═══════════════ KOMPOSISI ═══════════════ */
 
+/** Background mesh — komponen kecil sendiri (skill remotion-markup:
+ *  useCurrentFrame() hanya di komponen terkecil yang membutuhkannya). */
+const BgLayer: React.FC<{ pal: (typeof PALETTES)[WarnaId]; dur: number }> = ({ pal, dur }) => {
+  const frame = useCurrentFrame();
+  const drift = interpolate(frame, [0, dur], [0, 1], { extrapolateLeft: "clamp", extrapolateRight: "clamp", easing: EASE.inOut });
+  return (
+    <AbsoluteFill
+      style={{
+        background: [
+          `radial-gradient(circle at ${28 + drift * 14}% 22%, ${pal.accent}2e, transparent 52%)`,
+          `radial-gradient(circle at ${72 - drift * 12}% 78%, ${pal.accent}24, transparent 48%)`,
+          `linear-gradient(160deg, ${pal.bg} 0%, ${pal.bg2} 100%)`,
+        ].join(","),
+      }}
+    />
+  );
+};
+
+const ProgressBar: React.FC<{ dur: number; accent: string }> = ({ dur, accent }) => {
+  const frame = useCurrentFrame();
+  const prog = Math.min(frame / Math.max(dur - 1, 1), 1);
+  return (
+    <div style={{ position: "absolute", bottom: 0, left: 0, height: 6, width: `${prog * 100}%`, background: accent, opacity: 0.85 }} />
+  );
+};
+
 export const MotionStudio: React.FC<MotionStudioProps> = (props) => {
   const { judul, bullets, cta, warna, sfx } = props;
-  const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
   const dur = motionDurationFrames(props);
   const pal = PALETTES[(warna || "green") as WarnaId] || PALETTES.green;
@@ -688,19 +741,9 @@ export const MotionStudio: React.FC<MotionStudioProps> = (props) => {
     try { return JSON.parse(props.words || "[]") as NarWord[]; } catch { return []; }
   }, [props.words]);
 
-  const drift = interpolate(frame, [0, dur], [0, 1]);
-  const bgStyle: React.CSSProperties = {
-    background: [
-      `radial-gradient(circle at ${28 + drift * 14}% 22%, ${pal.accent}2e, transparent 52%)`,
-      `radial-gradient(circle at ${72 - drift * 12}% 78%, ${pal.accent}24, transparent 48%)`,
-      `linear-gradient(160deg, ${pal.bg} 0%, ${pal.bg2} 100%)`,
-    ].join(","),
-  };
-
-  const prog = Math.min(frame / Math.max(dur - 1, 1), 1);
-
   return (
-    <AbsoluteFill style={{ ...bgStyle, fontFamily: '"Montserrat XB", "Montserrat ExtraBold", sans-serif' }}>
+    <AbsoluteFill style={{ fontFamily: MOTION_THEME.fonts.display }}>
+      <BgLayer pal={pal} dur={dur} />
       <Particles accent={pal.accent} dur={dur} />
 
       {sfx ? (
@@ -743,7 +786,11 @@ export const MotionStudio: React.FC<MotionStudioProps> = (props) => {
         <NarrCaption words={narrWords} start={ctaStart / fps} end={dur / fps} accent={pal.accent} />
       </Sequence>
 
-      <div style={{ position: "absolute", bottom: 0, left: 0, height: 6, width: `${prog * 100}%`, background: pal.accent, opacity: 0.85 }} />
+      {/* 5-layer stack: grade di atas konten, grain + vignette paling atas */}
+      <Grade accent={pal.accent} />
+      <Grain />
+      <Vignette />
+      <ProgressBar dur={dur} accent={pal.accent} />
     </AbsoluteFill>
   );
 };
