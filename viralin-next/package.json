@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "@remotion/bundler": "^4.0.547",
+    "@remotion/captions": "^4.0.547",
     "@remotion/player": "^4.0.547",
     "@remotion/renderer": "^4.0.547",
     "lucide-react": "^1.80.0",
@@ -20,6 +21,7 @@
     "z-ai-web-dev-sdk": "^0.0.18"
   },
   "devDependencies": {
+    "@remotion/cli": "^4.0.547",
     "@types/node": "^24",
     "@types/react": "^19",
     "@types/react-dom": "^19",

@@ -19,8 +19,16 @@
  *  (background → aset → grafis → Grade → Grain + Vignette). */
 import React from "react";
 import { AbsoluteFill, Audio, Img, Sequence, continueRender, delayRender, interpolate, spring, staticFile, useCurrentFrame, useVideoConfig } from "remotion";
+import { createTikTokStyleCaptions, type Caption } from "@remotion/captions";
 import { MOTION_THEME } from "./theme";
 import { Grade, Grain, Vignette } from "./layers";
+import { TextKinetic } from "./scenes/TextKinetic";
+import { ListStaggered } from "./scenes/ListStaggered";
+import { ListNumberedVertical } from "./scenes/ListNumberedVertical";
+import { TextCounter } from "./scenes/TextCounter";
+import { BackgroundMeshGradient } from "./scenes/BackgroundMeshGradient";
+import { ParticleBubbles } from "./scenes/ParticleBubbles";
+import { ParticleConfetti } from "./scenes/ParticleConfetti";
 import {
   MOTION_CTA_START,
   PALETTES,
@@ -71,7 +79,7 @@ const Coin: React.FC<{ x: number; y: number; r: number; op: number }> = ({ x, y,
   </g>
 );
 
-const SceneIcon: React.FC<{ a: AnimId; text: string; accent: string; chip: string }> = ({ a, text, accent, chip }) => {
+const SceneIcon: React.FC<{ a: AnimId; accent: string; chip: string }> = ({ a, accent, chip }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
   const pop = spring({ frame, fps, config: SPRING.bouncy });
@@ -215,25 +223,10 @@ const SceneIcon: React.FC<{ a: AnimId; text: string; accent: string; chip: strin
       </>);
     }
     case "counter": {
-      const mm = text.match(/(\d+([.,]\d+)?)/);
-      if (!mm) return wrap(<g transform={`rotate(${frame * 3}) scale(${pop})`}>
+      // angka ditangani TextCounter (scene); di sini hanya fallback bintang
+      return wrap(<g transform={`rotate(${frame * 3}) scale(${pop})`}>
         <path d="M0 -34 L9 -9 L34 0 L9 9 L0 34 L-9 9 L-34 0 L-9 -9 Z" fill={accent} />
       </g>);
-      const target = parseFloat(mm[1].replace(",", "."));
-      const p = interpolate(frame, [5, 44], [0, 1], { extrapolateLeft: "clamp", extrapolateRight: "clamp", easing: EASE.out });
-      const v = target * (1 - Math.pow(1 - p, 3));
-      const show = target >= 100 ? Math.round(v) : Math.round(v * 10) / 10;
-      const unit = /%/.test(text) ? "%" : "";
-      const C = 2 * Math.PI * 56;
-      return wrap(<>
-        <circle r={56} fill={chip} stroke={accent} strokeWidth={9} strokeDasharray={C} strokeDashoffset={C * (1 - p)}
-          transform="rotate(-90)" strokeLinecap="round" opacity={0.95} />
-        <g transform={`scale(${pop})`}>
-          <text textAnchor="middle" dominantBaseline="central" fontSize={target >= 1000 ? 40 : 56} fontWeight={900} fill="#fff" style={{ fontVariantNumeric: "tabular-nums" }}>
-            {show}{unit}
-          </text>
-        </g>
-      </>);
     }
     case "kuliner": { // cangkir + uap mengepul
       const steam = (k: number) => Math.sin(frame / 6 + k * 1.4) * 10;
@@ -395,29 +388,6 @@ const SceneIcon: React.FC<{ a: AnimId; text: string; accent: string; chip: strin
   }
 };
 
-/* ═══════════════ LATAR: partikel naik + blob ═══════════════ */
-
-const Particles: React.FC<{ accent: string; dur: number }> = ({ accent, dur }) => {
-  const frame = useCurrentFrame();
-  return (
-    <AbsoluteFill style={{ pointerEvents: "none" }}>
-      {[...Array(14)].map((_, k) => {
-        const x = rnd(k) * 540;
-        const base = rnd(k + 50) * 960;
-        const speed = 1.2 + rnd(k + 130) * 2.2;
-        const y = ((base - frame * speed) % 960 + 960) % 960;
-        return (
-          <div key={k} style={{
-            position: "absolute", left: x + Math.sin(frame / 40 + k) * 14, top: y,
-            width: 4 + rnd(k + 90) * 6, height: 4 + rnd(k + 90) * 6, borderRadius: 99,
-            background: accent, opacity: 0.12 + 0.14 * Math.abs(Math.sin(frame / 9 + k)),
-          }} />
-        );
-      })}
-    </AbsoluteFill>
-  );
-};
-
 /* ═══════════════ SCENE ═══════════════ */
 
 /** Kata beranimasi (kinetic typography) — pop per kata + float halan terus. */
@@ -447,13 +417,10 @@ const Judul: React.FC<{ text: string; accent: string; hookF: number }> = ({ text
   const floatY = Math.sin(frame / 10) * 5;
   const y = (interpolate(s, [0, 1], [90, 0]) + floatY) * (1 - exitP) - exitP * 44;
   const scale = interpolate(s, [0, 1], [0.6, 1]) * zoom * (1 - 0.07 * exitP);
-  const lineW = interpolate(frame, [6, 30], [0, 240], { extrapolateRight: "clamp", extrapolateLeft: "clamp", easing: EASE.out }) * (1 - exitP);
   const q = /\?/.test(text);
   return (
     <div style={{ position: "relative", transform: `translateY(${y}px) scale(${scale})`, opacity: Math.min(s * 2, 1) * (1 - exitP), textAlign: "center" }}>
-      <div style={{ fontSize: size, lineHeight: 1.18, textShadow: "0 4px 24px rgba(0,0,0,.45)", letterSpacing: -0.5 }}>
-        {text.split(/\s+/).map((w, i) => <Word key={i} w={w} i={i} size={size} />)}
-      </div>
+      <TextKinetic text={text} accent={accent} size={size} />
       {q && (
         <div style={{
           position: "absolute", right: -10, top: -18, fontSize: size * 0.95, color: accent,
@@ -461,7 +428,6 @@ const Judul: React.FC<{ text: string; accent: string; hookF: number }> = ({ text
           opacity: Math.max(0, Math.min(1, (frame - 14) / 10)) * (1 - exitP), textShadow: "0 4px 24px rgba(0,0,0,.45)",
         }}>?</div>
       )}
-      <div style={{ height: 8, width: lineW, borderRadius: 4, background: accent, margin: "14px auto 0" }} />
     </div>
   );
 };
@@ -483,8 +449,7 @@ const BulletScene: React.FC<{ t: string; a: AnimId; idx: number; accent: string;
     /* Hukum #4 bang-motion: dua adegan berturut-turut TIDAK boleh sama dalam
      * ukuran, arah masuk, dan posisi teks → 3 varian layout berputar per idx. */
     const variant = idx % 3;
-    const y = (variant === 0 ? (1 - enter) * 52 : 0) - exitP * 40 + floatY;
-    const x = variant === 1 ? -(1 - enter) * 90 : variant === 2 ? (1 - enter) * 90 : 0;
+    const y = floatY - exitP * 40; // entrance arah kini dari wrapper scene (ListStaggered/Numbered)
     const fs = (t.length > 46 ? 25 : t.length > 32 ? 28 : 31) + (variant === 1 ? 2 : 0);
     const text = t.replace(/[.。]+$/, ""); // tanpa titik otomatis (Hukum #4)
     const glow = 26 + Math.sin(frame / 5 + idx) * 14;
@@ -497,7 +462,9 @@ const BulletScene: React.FC<{ t: string; a: AnimId; idx: number; accent: string;
     const sweep = interpolate(frame, [2, 18], [-1.2, 1.2], { extrapolateRight: "clamp", extrapolateLeft: "clamp", easing: EASE.out });
     const IconBox: React.FC<{ h: number }> = ({ h }) => (
       <div style={{ height: h, display: "flex", alignItems: "center", justifyContent: "center", filter: `drop-shadow(0 10px ${glow}px ${accent}66)` }}>
-        <SceneIcon a={a} text={t} accent={accent} chip={chip} />
+        {a === "counter" && /(\d+([.,]\d+)?)/.test(t)
+          ? <TextCounter text={t} accent={accent} chip={chip} />
+          : <SceneIcon a={a} accent={accent} chip={chip} />}
       </div>
     );
     const NumBadge: React.FC<{ s: number }> = ({ s }) => (
@@ -541,51 +508,45 @@ const BulletScene: React.FC<{ t: string; a: AnimId; idx: number; accent: string;
         )}
         {a === "alert" && <AbsoluteFill style={{ background: RED, opacity: (0.09 + 0.07 * Math.abs(Math.sin(frame / 2))) * (1 - exitP) }} />}
         {variant === 0 && (
-          /* varian 0: ikon atas + pill bawah (stacked) — masuk dari bawah */
+          /* varian 0: ikon atas + pill bawah (stacked) — entrance ListStaggered */
           <div style={{
-            display: "flex", flexDirection: "column", alignItems: "center", gap: 20, maxWidth: 480,
             transform: `translateY(${y}px) scale(${(0.86 + 0.14 * enter) * zoom * (1 - 0.08 * exitP)})`, opacity: op,
           }}>
-            <IconBox h={195} />
-            <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
-              <NumBadge s={46} />
-              <PillText size={fs} />
-            </div>
+            <ListStaggered accent={accent}>
+              <IconBox h={195} />
+              <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+                <NumBadge s={46} />
+                <PillText size={fs} />
+              </div>
+            </ListStaggered>
           </div>
         )}
         {variant === 1 && (
-          /* varian 1: ikon KIRI + teks kanan — masuk dari kiri, teks lebih besar */
+          /* varian 1: ikon KIRI + teks kanan — nomor besar ListNumberedVertical */
           <div style={{
             display: "flex", alignItems: "center", gap: 18, maxWidth: 500,
-            transform: `translateX(${x}px) translateY(${floatY}px) scale(${(0.86 + 0.14 * enter) * zoom * (1 - 0.08 * exitP)})`, opacity: op,
+            transform: `translateY(${floatY}px) scale(${(0.86 + 0.14 * enter) * zoom * (1 - 0.08 * exitP)})`, opacity: op,
           }}>
             <IconBox h={150} />
-            <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 12 }}>
-              <NumBadge s={40} />
+            <ListNumberedVertical num={idx + 1} accent={accent}>
               <PillText size={fs + 2} />
-            </div>
+            </ListNumberedVertical>
           </div>
         )}
         {variant === 2 && (
-          /* varian 2: teks dulu + marker underline accent, ikon di bawah — masuk dari kanan */
+          /* varian 2: teks dulu + ikon di bawah — entrance ListStaggered */
           <div style={{
-            display: "flex", flexDirection: "column", alignItems: "center", gap: 18, maxWidth: 480,
-            transform: `translateX(${x}px) translateY(${floatY}px) scale(${(0.86 + 0.14 * enter) * zoom * (1 - 0.08 * exitP)})`, opacity: op,
+            transform: `translateY(${floatY}px) scale(${(0.86 + 0.14 * enter) * zoom * (1 - 0.08 * exitP)})`, opacity: op,
           }}>
-            <div style={{ position: "relative", textAlign: "center", paddingBottom: 10 }}>
+            <ListStaggered accent={accent}>
               <div style={{
                 fontSize: fs + 4, lineHeight: 1.25, fontWeight: 800, color: "#fff",
-                textShadow: "0 4px 22px rgba(0,0,0,.5)", textWrap: "balance",
+                textShadow: "0 4px 22px rgba(0,0,0,.5)", textWrap: "balance", textAlign: "center",
               }}>
                 {text.split(/\s+/).map((w, i) => <Word key={i} w={w} i={i + 3} size={fs + 4} />)}
               </div>
-              <div style={{
-                position: "absolute", bottom: 0, left: "10%", right: "10%", height: 7, borderRadius: 4,
-                background: accent, transform: `scaleX(${Math.min(enter * 1.3, 1)})`, transformOrigin: "left center",
-                opacity: 0.9, boxShadow: `0 0 ${glow}px ${accent}66`,
-              }} />
-            </div>
-            <IconBox h={135} />
+              <IconBox h={135} />
+            </ListStaggered>
           </div>
         )}
       </AbsoluteFill>
@@ -601,26 +562,9 @@ const Cta: React.FC<{ text: string; accent: string }> = ({ text, accent }) => {
   const bob = Math.sin(frame / 4) * 7;
   const size = text.length > 22 ? 34 : text.length > 14 ? 40 : 46;
   const glow = 40 + Math.sin(frame / 3) * 22;
-  // confetti meledak berulang di sekeliling pill
-  const t0 = ((frame - 4) % 28 + 28) % 28;
-  const conf = [...Array(20)].map((_, k) => {
-    const ang = (k / 20) * Math.PI * 2 + rnd(k) * 0.6;
-    const sp = 90 + rnd(k + 9) * 110;
-    const x = Math.cos(ang) * sp * (t0 / 30);
-    const y = Math.sin(ang) * sp * (t0 / 30) + 0.045 * t0 * t0;
-    return (
-      <div key={k} style={{
-        position: "absolute", left: `calc(50% + ${x}px)`, top: `calc(50% + ${y}px)`,
-        width: 10, height: 14, borderRadius: 2, background: [GOLD, ROSE, accent, "#fff"][k % 4],
-        transform: `translate(-50%,-50%) rotate(${ang * 57 + frame * 5}deg)`,
-        opacity: Math.max(0, 1 - t0 / 24),
-      }} />
-    );
-  });
   return (
     <div style={{ transform: `scale(${s * pulse})`, opacity: Math.min(s * 2, 1), display: "flex", alignItems: "center", gap: 14 }}>
       <div style={{ position: "relative" }}>
-        {conf}
         <div style={{ position: "relative", overflow: "hidden", background: accent, borderRadius: 26, padding: "24px 36px", fontSize: size, fontWeight: 900, color: "#0b0b0b", letterSpacing: 1, boxShadow: `0 0 ${glow}px ${accent}88`, whiteSpace: "pre-wrap", textAlign: "center" }}>
           {text}
           <div style={{ position: "absolute", top: 0, bottom: 0, width: 64, left: shine, background: "linear-gradient(100deg, transparent, rgba(255,255,255,.55), transparent)", transform: "skewX(-18deg)" }} />
@@ -636,13 +580,12 @@ const Cta: React.FC<{ text: string; accent: string }> = ({ text, accent }) => {
 /** Kata narasi {w: teks, s/e: detik absolut} — dari whisper di server. */
 type NarWord = { w: string; s: number; e: number };
 
-/** Bentuk @remotion/captions (skill remotion-captions): semua caption diproses
- *  sebagai JSON dalam milidetik. NarWord server (detik) dikonversi ke sini
- *  di NarrCaption, supaya timing aktif mengikuti format Caption resmi. */
-type CaptionWord = { text: string; startMs: number; endMs: number; timestampMs: number | null; confidence: number | null };
-const toCaptionWords = (words: NarWord[]): CaptionWord[] =>
-  words.map((w) => ({
-    text: w.w,
+/** NarWord server (detik) → Caption resmi @remotion/captions (ms).
+ *  Kata dipastikan berawalan spasi (kecuali kata pertama) supaya
+ *  createTikTokStyleCaptions bisa memecah halaman di batas kata. */
+const toCaptionWords = (words: NarWord[]): Caption[] =>
+  words.map((w, i) => ({
+    text: i === 0 ? w.w.trimStart() : w.w.startsWith(" ") ? w.w : ` ${w.w}`,
     startMs: Math.round(w.s * 1000),
     endMs: Math.round(w.e * 1000),
     timestampMs: Math.round(((w.s + w.e) / 2) * 1000),
@@ -651,36 +594,46 @@ const toCaptionWords = (words: NarWord[]): CaptionWord[] =>
 
 const CAP_FONT = MOTION_THEME.fonts.caption;
 
-/** Caption karaoke gaya Hormozi: window geser 4 kata, kata aktif warna tema
- *  + pop + glow — sinkron dgn voice-over Edge TTS (timing whisper). */
+/** Caption karaoke gaya Hormozi: halaman TikTok (createTikTokStyleCaptions,
+ *  ~4-5 kata/halaman), kata aktif warna tema + pop + glow — sinkron dgn
+ *  voice-over Edge TTS (timing whisper). Jeda antar halaman menahan halaman
+ *  terakhir, seperti window geser sebelumnya. */
 const NarrCaption: React.FC<{ words: NarWord[]; start: number; end: number; accent: string }> =
   ({ words, start, end, accent }) => {
     const frame = useCurrentFrame();
     const { fps } = useVideoConfig();
-    if (!words.length) return null;
+    const pages = React.useMemo(
+      () => createTikTokStyleCaptions({ captions: toCaptionWords(words), combineTokensWithinMilliseconds: 1200 }).pages,
+      [words],
+    );
+    if (!pages.length) return null;
     const tMs = (start + frame / fps) * 1000; // frame LOKAL Sequence → ms absolut
     const startMs = start * 1000;
     const endMs = end * 1000;
-    const caps = toCaptionWords(words);
-    const inScene = caps.filter((w) => w.endMs > startMs + 10 && w.startMs < endMs - 10);
+    let page = pages.find((p) => tMs >= p.startMs && tMs < p.startMs + p.durationMs);
+    if (!page) {
+      // jeda antar halaman → tahan halaman terakhir yang sudah mulai
+      const started = pages.filter((p) => p.startMs <= tMs);
+      page = started[started.length - 1];
+    }
+    if (!page) return null;
+    const inScene = page.tokens.filter((t) => t.toMs > startMs + 10 && t.fromMs < endMs - 10);
     if (!inScene.length) return null;
     let act = -1;
     for (let i = 0; i < inScene.length; i++) {
-      if (tMs >= inScene[i].startMs && tMs < inScene[i].endMs) { act = i; break; }
-      if (inScene[i].endMs <= tMs) act = i; // gap antar kata → kata terakhir tetap tampil
+      if (tMs >= inScene[i].fromMs && tMs < inScene[i].toMs) { act = i; break; }
+      if (inScene[i].toMs <= tMs) act = i; // gap antar kata → kata terakhir tetap tampil
     }
     if (act < 0) return null;
-    const win = inScene.slice(Math.max(0, act), act + 4);
-    const off = act - Math.max(0, act);
     return (
       <div style={{
         position: "absolute", left: 26, right: 26, bottom: 108, display: "flex",
         flexWrap: "wrap", justifyContent: "center", gap: "2px 9px", pointerEvents: "none",
       }}>
-        {win.map((w, k) => {
-          const pop = spring({ frame: frame - (k - off) * 3, fps, config: SPRING.snappy });
-          const isAct = k === off;
-          const done = k < off;
+        {inScene.map((t, k) => {
+          const pop = spring({ frame: frame - (k - act) * 3, fps, config: SPRING.snappy });
+          const isAct = k === act;
+          const done = k < act;
           return (
             <span key={k} style={{
               fontFamily: CAP_FONT, fontSize: 40, lineHeight: 1.15, textTransform: "uppercase",
@@ -689,7 +642,7 @@ const NarrCaption: React.FC<{ words: NarWord[]; start: number; end: number; acce
               transformOrigin: "center bottom",
               WebkitTextStroke: "2.4px #000", paintOrder: "stroke fill",
               textShadow: isAct ? `0 0 22px ${accent}66, 0 4px 16px rgba(0,0,0,.6)` : "0 4px 16px rgba(0,0,0,.6)",
-            }}>{w.text}</span>
+            }}>{t.text.trim()}</span>
           );
         })}
       </div>
@@ -697,24 +650,6 @@ const NarrCaption: React.FC<{ words: NarWord[]; start: number; end: number; acce
   };
 
 /* ═══════════════ KOMPOSISI ═══════════════ */
-
-/** Background mesh — komponen kecil sendiri (skill remotion-markup:
- *  useCurrentFrame() hanya di komponen terkecil yang membutuhkannya). */
-const BgLayer: React.FC<{ pal: (typeof PALETTES)[WarnaId]; dur: number }> = ({ pal, dur }) => {
-  const frame = useCurrentFrame();
-  const drift = interpolate(frame, [0, dur], [0, 1], { extrapolateLeft: "clamp", extrapolateRight: "clamp", easing: EASE.inOut });
-  return (
-    <AbsoluteFill
-      style={{
-        background: [
-          `radial-gradient(circle at ${28 + drift * 14}% 22%, ${pal.accent}2e, transparent 52%)`,
-          `radial-gradient(circle at ${72 - drift * 12}% 78%, ${pal.accent}24, transparent 48%)`,
-          `linear-gradient(160deg, ${pal.bg} 0%, ${pal.bg2} 100%)`,
-        ].join(","),
-      }}
-    />
-  );
-};
 
 const ProgressBar: React.FC<{ dur: number; accent: string }> = ({ dur, accent }) => {
   const frame = useCurrentFrame();
@@ -743,8 +678,8 @@ export const MotionStudio: React.FC<MotionStudioProps> = (props) => {
 
   return (
     <AbsoluteFill style={{ fontFamily: MOTION_THEME.fonts.display }}>
-      <BgLayer pal={pal} dur={dur} />
-      <Particles accent={pal.accent} dur={dur} />
+      <BackgroundMeshGradient accent={pal.accent} bg={pal.bg} bg2={pal.bg2} />
+      <ParticleBubbles accent={pal.accent} />
 
       {sfx ? (
         <>
@@ -781,6 +716,7 @@ export const MotionStudio: React.FC<MotionStudioProps> = (props) => {
       {/* Scene 3: CTA */}
       <Sequence from={ctaStart} durationInFrames={Math.max(dur - ctaStart, 1)}>
         <AbsoluteFill style={{ alignItems: "center", justifyContent: "center", padding: 40 }}>
+          <ParticleConfetti accent={pal.accent} />
           <Cta text={cta || "FOLLOW SEKARANG"} accent={pal.accent} />
         </AbsoluteFill>
         <NarrCaption words={narrWords} start={ctaStart / fps} end={dur / fps} accent={pal.accent} />
