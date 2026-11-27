@@ -33,6 +33,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         <div className="side-group">Tools</div>
         {LIVE.map((t) => nl(`/fitur/${t.id}`, t.icon, t.name))}
         <div className="side-group">Info</div>
+        {nl("/pengaturan", "⚙️", "Pengaturan")}
         {nl("/harga", "💳", "Harga")}
         {nl("/tentang", "ℹ️", "Tentang")}
         {nl("/kontak", "✉️", "Kontak")}

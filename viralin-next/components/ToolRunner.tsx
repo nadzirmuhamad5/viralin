@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { Job } from "@/lib/store";
 import { PRESETS, DEFAULT_PRESET } from "@/lib/captions";
 import type { ToolDef, ToolField } from "@/lib/tools";
@@ -9,6 +9,7 @@ import JobPanel from "./JobPanel";
 
 /** Respons sukses POST /api/upload. */
 type UploadResponse = { ref: string; uploadId: string; name: string; bytes: number };
+type CookieAcc = { id: string; name: string; platform: string };
 
 /** Form + submit + polling untuk SATU tool — dipakai di halaman /fitur/[slug]. */
 export default function ToolRunner({ tool }: { tool: ToolDef }) {
@@ -19,9 +20,10 @@ export default function ToolRunner({ tool }: { tool: ToolDef }) {
   });
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
-  const [cookies, setCookies] = useState<{ id: string; name: string } | null>(null);
-  const [cookiesText, setCookiesText] = useState("");
   const hasSource = tool.fields.some((f) => f.key === "source");
+  // akun cookies dikelola di halaman Pengaturan — tool hanya memilih nama akun
+  const [cookieAccs, setCookieAccs] = useState<CookieAcc[]>([]);
+  const [cookieAcc, setCookieAcc] = useState("");
 
   // Job dari respons POST disimpan di `seed` supaya panel langsung tampil tanpa
   // menunggu poll pertama; hasil poll terbaru (via hook) yang lebih baru menang.
@@ -29,6 +31,15 @@ export default function ToolRunner({ tool }: { tool: ToolDef }) {
   const [watchId, setWatchId] = useState<string | null>(null);
   const { job: polledJob } = useJobPolling(watchId);
   const job = polledJob ?? seed;
+
+  // daftar akun cookies dari Pengaturan (isinya tak pernah dikirim ke browser)
+  useEffect(() => {
+    if (!hasSource) return;
+    fetch("/api/settings/cookies", { cache: "no-store" })
+      .then((r) => r.json())
+      .then((j) => setCookieAccs(j.accounts || []))
+      .catch(() => {});
+  }, [hasSource]);
 
   /** Upload ke POST /api/upload — dipakai untuk field source (ambil `ref`)
    *  dan file cookies (ambil `uploadId`). Beda hanya di penanganan responsnya. */
@@ -62,9 +73,7 @@ export default function ToolRunner({ tool }: { tool: ToolDef }) {
           tool: tool.id,
           inputs: {
             ...formVals,
-            ...(cookies?.id || cookiesText.trim()
-              ? { cookies: cookies?.id || cookiesText.trim() }
-              : {}),
+            ...(cookieAcc ? { cookies_account: cookieAcc } : {}),
           },
         }),
       });
@@ -160,33 +169,23 @@ export default function ToolRunner({ tool }: { tool: ToolDef }) {
             </label>
           ))}
           {hasSource && (
-            <label className="fld" key="cookies">
-              <span>Cookies YouTube/TikTok (opsional)</span>
-              <input
-                type="file"
-                accept=".txt"
-                onChange={(e) => {
-                  const file = e.target.files?.[0];
-                  if (file) upload(file, (j) => setCookies({ id: j.uploadId, name: file.name }));
-                }}
-              />
-              <textarea
-                rows={4}
-                placeholder="…atau paste langsung isi cookies.txt di sini (mulai dengan &quot;# Netscape HTTP Cookie File&quot;)"
-                value={cookiesText}
-                onChange={(e) => setCookiesText(e.target.value)}
-              />
+            <label className="fld" key="cookies_account">
+              <span>Akun cookies (opsional)</span>
+              <select
+                value={cookieAcc}
+                onChange={(e) => setCookieAcc(e.target.value)}
+              >
+                <option value="">— tanpa cookies —</option>
+                {cookieAccs.map((a) => (
+                  <option key={a.id} value={a.id}>
+                    {a.name} · {a.platform}
+                  </option>
+                ))}
+              </select>
               <em className="fhint">
-                Kena bot-check YouTube? Pasang ekstensi &quot;Get cookies.txt LOCALLY&quot; → buka
-                youtube.com dalam keadaan login → Export → <b>upload file-nya ATAU paste isinya</b> di
-                sini, lalu jalankan lagi.
+                Kelola daftar akun di menu <b>⚙️ Pengaturan</b> — cukup simpan sekali, pilih di sini
+                setiap jalan. Isi cookies tidak pernah tampil di form tool.
               </em>
-              {cookies && <em className="fhint">✅ cookies siap (file): {cookies.name}</em>}
-              {cookiesText.trim() && (
-                <em className="fhint">
-                  ✅ cookies siap (paste): {cookiesText.trim().split(/\r?\n/).length} baris
-                </em>
-              )}
             </label>
           )}
         </div>

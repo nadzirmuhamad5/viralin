@@ -3,6 +3,7 @@ import { createJob, runJob } from "@/lib/pipeline";
 import { PRESETS, DEFAULT_PRESET } from "@/lib/captions";
 import { TOOL_BY_ID } from "@/lib/tools";
 import { enqueue, queueStats } from "@/lib/queue";
+import { getAccountCookies } from "@/lib/cookie-store";
 
 export async function GET() {
   return Response.json({ jobs: (await allJobs()).map(publicJob) });
@@ -37,7 +38,14 @@ export async function POST(req: Request) {
       inputs[f.key] = String(v).slice(0, 4000);
     }
   }
-  // cookies opsional (anti bot-check YouTube/TikTok) — upload id ATAU paste mentah isi cookies.txt
+  // cookies opsional (anti bot-check YouTube/TikTok) — dua cara:
+  // (a) cookies_account: id akun tersimpan di Pengaturan → isi mentah di-resolve server-side
+  const accId = typeof rawInputs.cookies_account === "string" ? rawInputs.cookies_account.trim() : "";
+  if (accId) {
+    const raw = await getAccountCookies(accId);
+    if (raw) inputs.cookies = raw;
+  }
+  // (b) paste mentah langsung (kompatibel API lama): upload id ATAU isi cookies.txt
   const ckRaw = rawInputs.cookies;
   if (typeof ckRaw === "string" && ckRaw.trim()) inputs.cookies = ckRaw.trim().slice(0, 20000);
   // mode legacy {url} → samakan ke inputs.source SEBELUM validasi wajib,

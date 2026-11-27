@@ -255,10 +255,45 @@ export function extractJson<T>(s: string): T {
   }
 }
 
-export async function zaiImage(prompt: string, out: string, log?: (l: string) => void): Promise<void> {
+export async function zaiImage(
+  prompt: string,
+  out: string,
+  log?: (l: string) => void,
+  size?: string
+): Promise<void> {
   log?.("[ai] membuat gambar (z-ai image)…");
-  const r = await run([ZAI_BIN, "image", "-p", prompt, "-o", out], { timeout: 240_000 });
+  const r = await run(
+    [ZAI_BIN, "image", "-p", prompt, ...(size ? ["-s", size] : []), "-o", out],
+    { timeout: 240_000 }
+  );
   if (r.code !== 0 || !(await fs.stat(out).then(() => true).catch(() => false))) {
     throw new Error("z-ai image gagal: " + tailErr(r.stderr));
   }
+}
+
+/** Edit gambar dengan REFERENSI (z-ai image-edit) — dipakai agar avatar/wajah
+ *  konsisten antar frame storyboard: foto referensi di-ubah scene-nya, identitas dipertahankan.
+ *  CLI image-edit tidak mengirim array `images` (bug) → panggil SDK langsung di sini;
+ *  modul ini hanya dipakai server-side (tools/API) sesuai aturan SDK backend-only. */
+export async function zaiImageEdit(
+  prompt: string,
+  refImage: string,
+  out: string,
+  log?: (l: string) => void,
+  size?: string
+): Promise<void> {
+  log?.("[ai] mengedit gambar dari referensi (z-ai edit)…");
+  const buf = await fs.readFile(refImage);
+  const mime = /\.(jpe?g)$/i.test(refImage) ? "image/jpeg" : "image/png";
+  const dataUrl = `data:${mime};base64,${buf.toString("base64")}`;
+  const mod = await import("z-ai-web-dev-sdk");
+  const zai = await (mod.default ?? mod).create();
+  const resp = await zai.images.generations.edit({
+    prompt,
+    images: [{ url: dataUrl }],
+    size: size || "768x1344",
+  });
+  const b64 = resp?.data?.[0]?.base64;
+  if (!b64) throw new Error("z-ai edit tidak mengembalikan gambar");
+  await fs.writeFile(out, Buffer.from(b64, "base64"));
 }

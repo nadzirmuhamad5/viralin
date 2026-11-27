@@ -10,6 +10,7 @@ const MIME: Record<string, string> = {
   ".png": "image/png", ".webp": "image/webp", ".mp3": "audio/mpeg", ".m4a": "audio/mp4",
   ".wav": "audio/wav", ".srt": "text/plain; charset=utf-8", ".vtt": "text/vtt; charset=utf-8",
   ".txt": "text/plain; charset=utf-8", ".ass": "text/plain; charset=utf-8",
+  ".html": "text/html; charset=utf-8",
 };
 
 // gambar hasil job boleh di-cache browser; sisanya dinamis → no-store

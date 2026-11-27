@@ -6,7 +6,7 @@ import type { Job } from "@/lib/store";
 import { ICO, MB, fmt } from "@/lib/ui";
 
 const FILE_ICO: Record<string, string> = {
-  video: "🎬", image: "🖼️", subtitle: "📝", audio: "🎵",
+  video: "🎬", image: "🖼️", subtitle: "📝", audio: "🎵", doc: "🗂️",
 };
 
 /** Panel hasil job: tahapan, log live, klip/video, file, teks — taxidipakai semua halaman. */
@@ -52,26 +52,44 @@ export default function JobPanel({ job }: { job: Job }) {
         </div>
       )}
 
-      {/* file lain (srt, gambar, audio, video non-klip) — + link Drive bila job upload ke sana */}
+      {/* file lain (srt, gambar, audio, video non-klip, storyboard) — + link Drive bila job upload ke sana */}
       {job.files && job.files.length > 0 && (
         <div className="files">
           {job.files.map((f) => (
-            <div className="frow" key={f.file}>
-              <a
-                className="fmain"
-                href={`/api/jobs/${job.id}/media/${f.file}`}
-                download={f.file}
-              >
-                <span>{FILE_ICO[f.kind] || "📄"}</span>
-                <span className="fhandle">{f.file}</span>
-                <span className="flabel">{f.label}</span>
-                <span className="fdown"><Download size={14} aria-hidden="true" /></span>
-              </a>
-              {f.link && (
-                <a className="fdrive" href={f.link} target="_blank" rel="noreferrer" title="Buka di Google Drive">
-                  ☁️ Drive
-                </a>
+            <div className="fwrap" key={f.file}>
+              {f.kind === "image" && (
+                <img
+                  className="fimg"
+                  src={`/api/jobs/${job.id}/media/${f.file}`}
+                  alt={f.label}
+                  loading="lazy"
+                />
               )}
+              {f.kind === "doc" && f.file.endsWith(".html") && (
+                <iframe
+                  className="fboard"
+                  src={`/api/jobs/${job.id}/media/${f.file}`}
+                  title={f.label}
+                  loading="lazy"
+                />
+              )}
+              <div className="frow">
+                <a
+                  className="fmain"
+                  href={`/api/jobs/${job.id}/media/${f.file}`}
+                  download={f.file}
+                >
+                  <span>{FILE_ICO[f.kind] || "📄"}</span>
+                  <span className="fhandle">{f.file}</span>
+                  <span className="flabel">{f.label}</span>
+                  <span className="fdown"><Download size={14} aria-hidden="true" /></span>
+                </a>
+                {f.link && (
+                  <a className="fdrive" href={f.link} target="_blank" rel="noreferrer" title="Buka di Google Drive">
+                    ☁️ Drive
+                  </a>
+                )}
+              </div>
             </div>
           ))}
         </div>

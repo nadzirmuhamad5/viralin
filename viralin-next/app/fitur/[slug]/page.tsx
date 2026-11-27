@@ -2,6 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { TOOL_BY_ID } from "@/lib/tools";
 import ToolRunner from "@/components/ToolRunner";
+import ToolHistory from "@/components/ToolHistory";
 
 export default async function ToolPage({ params }: { params: Promise<{ slug: string }> }) {
   const { slug } = await params;
@@ -34,6 +35,7 @@ export default async function ToolPage({ params }: { params: Promise<{ slug: str
           </p>
         </div>
       )}
+      <ToolHistory toolId={t.id} />
     </section>
   );
 }
