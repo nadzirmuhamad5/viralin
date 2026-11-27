@@ -229,15 +229,18 @@ export async function renderKlip(opts: {
 /* ── AI gratis via CLI z-ai (chat GLM, image gen) ─────────────────────── */
 
 export async function zaiChat(system: string, prompt: string, log?: (l: string) => void): Promise<string> {
-  const out = path.join("/tmp", "vl-llm-" + Math.random().toString(36).slice(2, 8) + ".json");
-  log?.("[ai] memanggil LLM gratis (z-ai)…");
-  const r = await run([ZAI_BIN, "chat", "-m", ZAI_MODEL, "-p", prompt, ...(system ? ["-s", system] : []), "-o", out], {
-    timeout: 240_000,
-  });
-  if (r.code !== 0) throw new Error("z-ai chat gagal: " + tailErr(r.stderr));
-  const raw = await fs.readFile(out, "utf8");
-  await fs.rm(out, { force: true });
-  const j = JSON.parse(raw) as { choices?: Array<{ message?: { content?: string } }> };
+  // Lewat JS API, bukan CLI: perintah `z-ai chat` tidak pernah mengirim model
+  // (flag -m diabaikan handler chat) sehingga router menolak dengan 400.
+  log?.("[ai] memanggil LLM (Aria Router)…");
+  const mod = await import("z-ai-web-dev-sdk");
+  const zai = await (mod.default ?? mod).create();
+  const j = (await zai.chat.completions.create({
+    model: ZAI_MODEL,
+    messages: [
+      ...(system ? [{ role: "system" as const, content: system }] : []),
+      { role: "user" as const, content: prompt },
+    ],
+  })) as { choices?: Array<{ message?: { content?: string } }> };
   return (j.choices?.[0]?.message?.content || "").trim();
 }
 
