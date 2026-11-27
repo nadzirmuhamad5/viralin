@@ -4,6 +4,18 @@ import { useCallback, useEffect, useState } from "react";
 
 type Acc = { id: string; name: string; platform: string; createdAt: number };
 
+type LlmInfo = {
+  provider: string;
+  counts: Record<string, number>;
+  masked: Record<string, string[]>;
+};
+
+const LLM_PROVIDERS_UI = [
+  { value: "aria", label: "Aria Router (deepseek-flash)" },
+  { value: "onemin", label: "1min.ai (gpt-4.1-mini)" },
+  { value: "gemini", label: "Gemini (gemini-2.5-flash)" },
+];
+
 const PLATFORMS = [
   { value: "youtube", label: "YouTube" },
   { value: "tiktok", label: "TikTok" },
@@ -21,6 +33,14 @@ export default function Pengaturan() {
   const [err, setErr] = useState("");
   const [ok, setOk] = useState("");
 
+  // ── Provider LLM ──
+  const [llm, setLlm] = useState<LlmInfo | null>(null);
+  const [llmProvider, setLlmProvider] = useState("aria");
+  const [llmKeys, setLlmKeys] = useState({ aria: "", onemin: "", gemini: "" });
+  const [llmBusy, setLlmBusy] = useState(false);
+  const [llmErr, setLlmErr] = useState("");
+  const [llmOk, setLlmOk] = useState("");
+
   const load = useCallback(async () => {
     try {
       const r = await fetch("/api/settings/cookies", { cache: "no-store" });
@@ -31,9 +51,44 @@ export default function Pengaturan() {
     }
   }, []);
 
+  const loadLlm = useCallback(async () => {
+    try {
+      const r = await fetch("/api/settings/llm", { cache: "no-store" });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || "gagal memuat");
+      setLlm(j);
+      setLlmProvider(j.provider || "aria");
+    } catch {
+      /* server restart */
+    }
+  }, []);
+
   useEffect(() => {
     void load();
-  }, [load]);
+    void loadLlm();
+  }, [load, loadLlm]);
+
+  const saveLlm = async () => {
+    setLlmErr("");
+    setLlmOk("");
+    setLlmBusy(true);
+    try {
+      const r = await fetch("/api/settings/llm", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ provider: llmProvider, keys: llmKeys }),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || "gagal simpan");
+      setLlmOk(`Provider LLM sekarang "${llmProvider}" — berlaku langsung tanpa restart.`);
+      setLlmKeys({ aria: "", onemin: "", gemini: "" });
+      await loadLlm();
+    } catch (e) {
+      setLlmErr(String((e as Error).message));
+    } finally {
+      setLlmBusy(false);
+    }
+  };
 
   const submit = async () => {
     setErr("");
@@ -138,6 +193,54 @@ export default function Pengaturan() {
             ))}
           </div>
         )}
+      </div>
+
+      <div className="panel">
+        <h2 className="sec-h" style={{ marginTop: 0 }}>
+          🤖 Provider LLM (teks generate)
+        </h2>
+        <p className="mdesc dim">
+          Provider untuk semua generate teks (judul, naskah, tips, dll). Berlaku langsung tanpa
+          restart. Key disimpan di server dan tidak pernah ditampilkan penuh — hanya 4 karakter
+          terakhir. Key kosong = biarkan yang lama; isi daftar baru untuk mengganti/menghapus key.
+        </p>
+        <p className="mdesc dim">
+          ⚠️ Aplikasi ini terbuka publik tanpa login — siapa pun yang membuka halaman ini bisa
+          mengubah provider dan key. Batasi aksesnya kalau sudah dipakai serius.
+        </p>
+        <div className="fields">
+          <label className="fld">
+            <span>Provider aktif</span>
+            <select value={llmProvider} onChange={(e) => setLlmProvider(e.target.value)}>
+              {LLM_PROVIDERS_UI.map((p) => (
+                <option key={p.value} value={p.value}>
+                  {p.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          {LLM_PROVIDERS_UI.map((p) => (
+            <label className="fld" key={p.value}>
+              <span>
+                Key {p.label.split(" (")[0]}
+                {llm
+                  ? ` — ${llm.counts[p.value] || 0} tersimpan${llm.masked[p.value]?.length ? `: ${llm.masked[p.value].join(", ")}` : ""}`
+                  : ""}
+              </span>
+              <textarea
+                rows={2}
+                placeholder="key1,key2 — pisah koma buat rotasi; kosong = biarkan lama"
+                value={llmKeys[p.value as keyof typeof llmKeys]}
+                onChange={(e) => setLlmKeys({ ...llmKeys, [p.value]: e.target.value })}
+              />
+            </label>
+          ))}
+        </div>
+        {llmErr && <div className="err">❌ {llmErr}</div>}
+        {llmOk && <div className="err" style={{ borderColor: "var(--acc)" }}>✅ {llmOk}</div>}
+        <button className="btn btn-white run" onClick={saveLlm} disabled={llmBusy}>
+          {llmBusy ? "⏳ Menyimpan…" : "💾 Simpan provider LLM"}
+        </button>
       </div>
     </section>
   );
