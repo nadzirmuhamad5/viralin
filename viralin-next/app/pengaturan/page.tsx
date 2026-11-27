@@ -12,8 +12,9 @@ type LlmInfo = {
 
 const LLM_PROVIDERS_UI = [
   { value: "aria", label: "Aria Router (deepseek-flash)" },
-  { value: "onemin", label: "1min.ai (gpt-4.1-mini)" },
+  { value: "onemin", label: "1min.ai (qwen3.7-flash)" },
   { value: "gemini", label: "Gemini (gemini-2.5-flash)" },
+  { value: "openrouter", label: "OpenRouter (openrouter/free)" },
 ];
 
 const PLATFORMS = [
@@ -36,7 +37,7 @@ export default function Pengaturan() {
   // ── Provider LLM ──
   const [llm, setLlm] = useState<LlmInfo | null>(null);
   const [llmProvider, setLlmProvider] = useState("aria");
-  const [llmKeys, setLlmKeys] = useState({ aria: "", onemin: "", gemini: "" });
+  const [llmKeys, setLlmKeys] = useState({ aria: "", onemin: "", gemini: "", openrouter: "" });
   const [llmBusy, setLlmBusy] = useState(false);
   const [llmErr, setLlmErr] = useState("");
   const [llmOk, setLlmOk] = useState("");
@@ -81,7 +82,7 @@ export default function Pengaturan() {
       const j = await r.json();
       if (!r.ok) throw new Error(j.error || "gagal simpan");
       setLlmOk(`Provider LLM sekarang "${llmProvider}" — berlaku langsung tanpa restart.`);
-      setLlmKeys({ aria: "", onemin: "", gemini: "" });
+      setLlmKeys({ aria: "", onemin: "", gemini: "", openrouter: "" });
       await loadLlm();
     } catch (e) {
       setLlmErr(String((e as Error).message));

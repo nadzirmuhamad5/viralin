@@ -50,7 +50,9 @@ export const LLM_PROVIDERS = {
   onemin: { baseUrl: "https://api.1min.ai/openai/v1", apiKeys: [...splitKeys(process.env.ONEMIN_API_KEYS), ...splitKeys(process.env.ONEMIN_API_KEY)], keyEnv: "ONEMIN_API_KEYS", model: process.env.ONEMIN_MODEL || "qwen3.7-flash" },
   /** Gemini (jalur OpenAI-compatible) — key dari env GEMINI_API_KEYS (GEMINI_API_KEY tunggal juga dibaca). */
   gemini: { baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai", apiKeys: [...splitKeys(process.env.GEMINI_API_KEYS), ...splitKeys(process.env.GEMINI_API_KEY)], keyEnv: "GEMINI_API_KEYS", model: process.env.GEMINI_MODEL || "gemini-2.5-flash" },
+  /** OpenRouter — key dari env OPENROUTER_API_KEYS (OPENROUTER_API_KEY tunggal juga dibaca). */
+  openrouter: { baseUrl: "https://openrouter.ai/api/v1", apiKeys: [...splitKeys(process.env.OPENROUTER_API_KEYS), ...splitKeys(process.env.OPENROUTER_API_KEY)], keyEnv: "OPENROUTER_API_KEYS", model: process.env.OPENROUTER_MODEL || "openrouter/free" },
 } as const;
 export type LLMProviderId = keyof typeof LLM_PROVIDERS;
-/** Pilih provider via env LLM_PROVIDER (aria | onemin | gemini). */
+/** Pilih provider via env LLM_PROVIDER (aria | onemin | gemini | openrouter). */
 export const LLM_PROVIDER = process.env.LLM_PROVIDER || "aria";
