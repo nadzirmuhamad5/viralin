@@ -64,6 +64,13 @@ export type ResolvedLLM = {
   counts: Record<LLMProviderId, number>;
 };
 
+/** Key untuk provider tertentu (file Pengaturan dulu, lalu env). */
+export async function getProviderKeys(p: LLMProviderId): Promise<string[]> {
+  const file = await readFile();
+  const fk = file.keys?.[p];
+  return fk && fk.length ? fk : [...LLM_PROVIDERS[p].apiKeys];
+}
+
 /** Konfigurasi LLM efektif: file Pengaturan (kalau ada) menimpa env. */
 export async function resolveLLM(): Promise<ResolvedLLM> {
   const file = await readFile();

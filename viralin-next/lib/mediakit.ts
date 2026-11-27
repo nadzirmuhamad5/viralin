@@ -5,9 +5,9 @@ import { createHash, randomBytes } from "crypto";
 import { run, tailErr } from "./exec";
 import { buildAss, type Word } from "./captions";
 import {
-  PY, DEPS, YTDLP, ENV, WHISPER_MODEL, WHISPER_LANG, UPLOAD_DIR, FONTS_DIR, ZAI_BIN,
+  PY, DEPS, YTDLP, ENV, WHISPER_MODEL, WHISPER_LANG, UPLOAD_DIR, FONTS_DIR,
 } from "./config";
-import { resolveLLM } from "./llm-store";
+import { resolveLLM, getProviderKeys } from "./llm-store";
 import { whisperdTranscribe, isWhisperdUnavailable, type WhisperInfo } from "./whisperd";
 import type { CreateImageEditBody } from "z-ai-web-dev-sdk";
 
@@ -278,20 +278,56 @@ export function extractJson<T>(s: string): T {
   }
 }
 
+/** Gambar dari teks via 1min.ai (IMAGE_GENERATOR, ideogram-3, FLASH = paling murah/cepat).
+ *  Key 1min.ai dari Pengaturan/env (provider onemin). `size` harus resolusi valid
+ *  ideogram-3 (mis. "768x1344"); tanpa size → vertikal 9:16. */
 export async function zaiImage(
   prompt: string,
   out: string,
   log?: (l: string) => void,
   size?: string
 ): Promise<void> {
-  log?.("[ai] membuat gambar (z-ai image)…");
-  const r = await run(
-    [ZAI_BIN, "image", "-p", prompt, ...(size ? ["-s", size] : []), "-o", out],
-    { timeout: 240_000 }
-  );
-  if (r.code !== 0 || !(await fs.stat(out).then(() => true).catch(() => false))) {
-    throw new Error("z-ai image gagal: " + tailErr(r.stderr));
+  log?.("[ai] membuat gambar (1min.ai image)…");
+  const apiKeys = await getProviderKeys("onemin");
+  if (!apiKeys.length) throw new Error("key 1min.ai belum dipasang — isi di Pengaturan → Provider LLM → onemin");
+  const model = process.env.ONEMIN_IMAGE_MODEL || "ideogram-3";
+  const body = JSON.stringify({
+    type: "IMAGE_GENERATOR",
+    model,
+    promptObject: {
+      prompt,
+      num_images: 1,
+      rendering_speed: "FLASH",
+      ...(size ? { resolution: size } : { aspect_ratio: "9x16" }),
+    },
+  });
+  let lastErr = "";
+  for (let i = 0; i < apiKeys.length; i++) {
+    const res = await fetch("https://api.1min.ai/api/features", {
+      method: "POST",
+      headers: { "API-KEY": apiKeys[i], "Content-Type": "application/json" },
+      body,
+      signal: AbortSignal.timeout(240_000),
+    });
+    if (!res.ok) {
+      lastErr = `(${res.status}) ${(await res.text()).slice(0, 300)}`;
+      if (![401, 402, 403, 429].includes(res.status)) break; // bukan masalah key
+      continue;
+    }
+    const j = (await res.json()) as {
+      aiRecord?: { aiRecordDetail?: { responseObject?: { data?: Array<{ url?: string }> }; resultObject?: string[] } };
+    };
+    const url =
+      j.aiRecord?.aiRecordDetail?.responseObject?.data?.[0]?.url ||
+      j.aiRecord?.aiRecordDetail?.resultObject?.find((u) => u.startsWith("http"));
+    if (!url) throw new Error("1min.ai image tidak mengembalikan URL gambar");
+    const img = await fetch(url, { signal: AbortSignal.timeout(120_000) });
+    if (!img.ok) throw new Error(`unduh gambar gagal: HTTP ${img.status}`);
+    await fs.mkdir(path.dirname(out), { recursive: true });
+    await fs.writeFile(out, Buffer.from(await img.arrayBuffer()));
+    return;
   }
+  throw new Error(`1min.ai image gagal: semua ${apiKeys.length} key dicoba. Terakhir: ${lastErr}`);
 }
 
 /** Edit gambar dengan REFERENSI (z-ai image-edit) — dipakai agar avatar/wajah
