@@ -10,6 +10,7 @@ import { run as kontenTempel } from "./konten-tempel";
 import { run as rageBait } from "./ragebait";
 import { run as titleOptimizer } from "./title-optimizer";
 import { run as viralTips } from "./viral-tips";
+import { run as ugcAffiliate } from "./ugc-affiliate";
 
 export type { ToolCtx, Log } from "./_shared";
 
@@ -20,4 +21,5 @@ export const TOOL_RUNNERS: Record<string, (ctx: ToolCtx) => Promise<void>> = {
   ragebait: rageBait,
   "title-optimizer": titleOptimizer,
   "viral-tips": viralTips,
+  "ugc-affiliate": ugcAffiliate,
 };

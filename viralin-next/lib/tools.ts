@@ -77,6 +77,28 @@ export const TOOLS: ToolDef[] = [
     ],
   },
   {
+    id: "ugc-affiliate", name: "UGC Tiru Konten", icon: "🧬", group: "AI Generatif", badge: "NEW", live: true,
+    desc: "Tempel link video viral → AI bedah struktur beat-nya → tulis naskah UGC BARU untuk produk affiliate TikTok Shop + voiceover TTS + caption SRT. Meniru struktur, bukan kata-kata.",
+    fields: [
+      SOURCE_FIELD,
+      { key: "produk", label: "Nama produk affiliate", type: "text", required: true,
+        placeholder: "mis. Serum Vitamin C Glowing 20ml",
+        hint: "Produk yang kamu daftarkan di TikTok Shop affiliate." },
+      { key: "cta", label: "CTA affiliate (opsional)", type: "text",
+        default: "Cek keranjang kuning sekarang sebelum promo habis!" },
+      { key: "niche", label: "Niche / gaya akun (opsional)", type: "text",
+        placeholder: "mis. skincare, gadget murah, mom & baby" },
+      { key: "durasi", label: "Target durasi naskah (detik)", type: "number", default: "30" },
+      { key: "voice", label: "Suara voiceover", type: "select", default: "id-ID-ArdiNeural",
+        options: [
+          { value: "id-ID-ArdiNeural", label: "Ardi — Pria 🇮🇩" },
+          { value: "id-ID-GadisNeural", label: "Gadis — Wanita 🇮🇩" },
+          { value: "en-US-AndrewMultilingualNeural", label: "Andrew — multibahasa" },
+          { value: "en-US-AvaMultilingualNeural", label: "Ava — multibahasa" },
+        ] },
+    ],
+  },
+  {
     id: "ragebait", name: "Rage Bait Studio", icon: "🔥", group: "AI Generatif", badge: "NEW", live: true,
     desc: "Short rage bait ala kreator YouTube ID: hook provokatif + 3 momen nyebelin bernomor, ilustrasi komik AI, narasi gue/lu, karaoke merah, TTS pace cepat. Preset rage terkunci — tinggal isi topik.",
     fields: [

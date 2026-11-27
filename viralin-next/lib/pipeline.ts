@@ -57,13 +57,27 @@ export function createJob(
 function setStage(job: Job, name: string, status: Stage["status"]) {
   const s = job.stages.find((x) => x.name === name);
   if (!s) return;
-  s.status = status;
-  if (status === "run") s.ms = undefined;
-  if (status === "done" || status === "fail") s.ms = Date.now();
+  if (status === "run") {
+    // penanda mulai tahap + simpan waktu mulai utk durasi
+    s.status = "run";
+    s.ms = undefined;
+    s.since = Date.now();
+    pushLog(job, `▶️ ${s.label}`);
+  } else if (status === "done" || status === "fail") {
+    s.status = status;
+    s.ms = Date.now();
+    const dur = s.since ? ` — ${((s.ms - s.since) / 1000).toFixed(1)}s` : "";
+    pushLog(job, (status === "done" ? "✅ " : "❌ ") + s.label + (status === "done" ? dur : ""));
+  }
 }
 
 function pushLog(job: Job, line: string, persistToo = false) {
-  job.logs.push(line.slice(0, 240));
+  // setiap baris beri timestamp agar urutan pipeline terbaca jelas di UI
+  const t = new Date();
+  const hh = String(t.getHours()).padStart(2, "0");
+  const mm = String(t.getMinutes()).padStart(2, "0");
+  const ss = String(t.getSeconds()).padStart(2, "0");
+  job.logs.push(`[${hh}:${mm}:${ss}] ${line.slice(0, 240)}`);
   if (job.logs.length > 160) job.logs.splice(0, job.logs.length - 140);
   if (persistToo) void persist(job);
 }
@@ -149,6 +163,7 @@ export async function runJob(job: Job): Promise<void> {
   // ── jalur tool generik (semua fitur selain klip-ai) ────────────────
   if (job.tool && job.tool !== "klip-ai") {
     try {
+      pushLog(job, `[job] tool ${job.tool} · id ${job.id}`, true);
       setStage(job, "sumber", "run");
       setStage(job, "proses", "run");
       await runTool(job, dir, (l: string) => pushLog(job, l));
@@ -171,6 +186,7 @@ export async function runJob(job: Job): Promise<void> {
   }
 
   try {
+    pushLog(job, `[job] klip-ai · id ${job.id} · preset ${job.captionPreset}`, true);
     // ── 1. unduh (yt-dlp, + cookies opsional & fallback client) ───────
     curStage = "download";
     setStage(job, "download", "run");

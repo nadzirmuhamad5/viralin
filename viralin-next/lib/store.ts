@@ -7,8 +7,13 @@ export const DATA = path.join(process.cwd(), "data");
 const JOBS_DIR = path.join(DATA, "jobs");
 const UPLOADS_DIR = path.join(DATA, "uploads");
 
+/** Waktu boot proses OS — ambang penandaan job stale (lihat loadAll).
+ *  process.uptime() identik di semua instansi modul (satu proses dev),
+ *  berbeda dari konstanta module-level yang ter-instantiasi ulang saat HMR. */
+const PROC_BOOT_MS = Date.now() - Math.round(process.uptime() * 1000);
+
 export type StageStatus = "pending" | "run" | "done" | "fail";
-export type Stage = { name: string; label: string; status: StageStatus; ms?: number };
+export type Stage = { name: string; label: string; status: StageStatus; ms?: number; since?: number };
 
 export type Clip = {
   file: string;
@@ -86,9 +91,12 @@ async function loadAll(): Promise<void> {
   } catch {
     /* belum ada dir */
   }
-  // job "run"/"queued" dari proses lama sudah mati → tandai fail agar UI tidak menggantung
+  // job "run"/"queued" dari proses lama sudah mati → tandai fail agar UI tidak menggantung.
+  // Stale = dibuat SEBELUM proses OS ini bangun (createdAt < PROC_BOOT_MS). Job yang dibuat
+  // SETELAH boot milik proses hidup ini — Turbopack dev memuat instansi store baru per
+  // rute/HMR; tanpa ambang ini job fresh salah ditandai mati saat poll pertama.
   for (const j of jobs.values()) {
-    if (j.status === "run" || j.status === "queued") {
+    if ((j.status === "run" || j.status === "queued") && j.createdAt < PROC_BOOT_MS) {
       j.status = "fail";
       j.error = j.error || "proses lama mati (sandbox di-recycle) — jalankan ulang";
     }

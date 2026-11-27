@@ -89,12 +89,12 @@ export default function JobPanel({ job }: { job: Job }) {
         </div>
       )}
 
-      {/* log */}
+      {/* log pipeline — auto-terbuka selama job masih berjalan */}
       {job.logs.length > 0 && (
-        <details className="logwrap">
-          <summary>Log pipeline ({job.logs.length} baris)</summary>
+        <details className="logwrap" open={job.status === "run"}>
+          <summary>Log pipeline ({job.logs.length} baris){job.status === "run" ? " · berjalan…" : ""}</summary>
           <pre className="logs">
-            {job.logs.slice(-40).map((l, i) => (
+            {job.logs.slice(-60).map((l, i) => (
               <span key={i}>{l + "\n"}</span>
             ))}
           </pre>
