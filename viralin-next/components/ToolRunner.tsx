@@ -1,11 +1,16 @@
 "use client";
 
+import dynamic from "next/dynamic";
 import { useEffect, useState } from "react";
 import type { Job } from "@/lib/store";
 import { PRESETS, DEFAULT_PRESET } from "@/lib/captions";
 import type { ToolDef, ToolField } from "@/lib/tools";
 import { useJobPolling } from "@/lib/use-job-polling";
 import JobPanel from "./JobPanel";
+
+// Preview video hanya untuk motion-studio — dimuat malas supaya halaman tool
+// lain tidak ikut mem-bundle @remotion/player.
+const MotionPreview = dynamic(() => import("./MotionPreview"), { ssr: false });
 
 /** Respons sukses POST /api/upload. */
 type UploadResponse = { ref: string; uploadId: string; name: string; bytes: number };
@@ -194,6 +199,7 @@ export default function ToolRunner({ tool }: { tool: ToolDef }) {
           {running ? "⚙️ Memproses…" : "▶️ Jalankan"}
         </button>
       </div>
+      {tool.id === "motion-studio" && <MotionPreview values={formVals} />}
       {job && <JobPanel job={job} />}
     </>
   );
