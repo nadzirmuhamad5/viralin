@@ -5,7 +5,8 @@ import { createHash, randomBytes } from "crypto";
 import { run, tailErr } from "./exec";
 import { buildAss, type Word } from "./captions";
 import {
-  PY, DEPS, YTDLP, ENV, WHISPER_MODEL, WHISPER_LANG, UPLOAD_DIR, FONTS_DIR, ZAI_BIN, ZAI_MODEL,
+  PY, DEPS, YTDLP, ENV, WHISPER_MODEL, WHISPER_LANG, UPLOAD_DIR, FONTS_DIR, ZAI_BIN,
+  LLM_PROVIDERS, LLM_PROVIDER, type LLMProviderId,
 } from "./config";
 import { whisperdTranscribe, isWhisperdUnavailable, type WhisperInfo } from "./whisperd";
 import type { CreateImageEditBody } from "z-ai-web-dev-sdk";
@@ -230,18 +231,25 @@ export async function renderKlip(opts: {
 /* ── AI gratis via CLI z-ai (chat GLM, image gen) ─────────────────────── */
 
 export async function zaiChat(system: string, prompt: string, log?: (l: string) => void): Promise<string> {
-  // Lewat JS API, bukan CLI: perintah `z-ai chat` tidak pernah mengirim model
-  // (flag -m diabaikan handler chat) sehingga router menolak dengan 400.
-  log?.("[ai] memanggil LLM (Aria Router)…");
-  const mod = await import("z-ai-web-dev-sdk");
-  const zai = await (mod.default ?? mod).create();
-  const j = (await zai.chat.completions.create({
-    model: ZAI_MODEL,
-    messages: [
-      ...(system ? [{ role: "system" as const, content: system }] : []),
-      { role: "user" as const, content: prompt },
-    ],
-  })) as { choices?: Array<{ message?: { content?: string } }> };
+  // Semua provider OpenAI-compatible: POST {baseUrl}/chat/completions, Bearer key.
+  // SDK z-ai tidak dipakai di sini karena create()-nya hanya baca satu file config.
+  const p = LLM_PROVIDERS[LLM_PROVIDER as LLMProviderId];
+  if (!p) throw new Error(`LLM_PROVIDER tidak dikenal: ${LLM_PROVIDER} (pilih: aria, onemin, gemini)`);
+  if (!p.apiKey) throw new Error(`LLM ${LLM_PROVIDER} belum punya API key (isi ${LLM_PROVIDER === "aria" ? ".z-ai-config" : LLM_PROVIDER === "onemin" ? "ONEMIN_API_KEY" : "GEMINI_API_KEY"})`);
+  log?.(`[ai] memanggil LLM (${LLM_PROVIDER}/${p.model})…`);
+  const res = await fetch(`${p.baseUrl}/chat/completions`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${p.apiKey}` },
+    body: JSON.stringify({
+      model: p.model,
+      messages: [
+        ...(system ? [{ role: "system" as const, content: system }] : []),
+        { role: "user" as const, content: prompt },
+      ],
+    }),
+  });
+  if (!res.ok) throw new Error(`LLM ${LLM_PROVIDER} gagal (${res.status}): ${await res.text()}`);
+  const j = (await res.json()) as { choices?: Array<{ message?: { content?: string } }> };
   return (j.choices?.[0]?.message?.content || "").trim();
 }
 

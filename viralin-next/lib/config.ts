@@ -1,6 +1,8 @@
 /** Konfigurasi terpusat — dipakai mediakit, whisperd, pipeline & tool tools.
  *  Semua path kini portable (relatif ke cwd / env var), bukan hardcode sandbox. */
 import path from "path";
+import fs from "fs";
+import os from "os";
 
 export const PY = process.env.PYTHON || "python3";
 
@@ -25,3 +27,25 @@ export const FONTS_DIR = path.join(process.cwd(), "assets", "caption-fonts");
 export const ZAI_BIN = process.env.VL_ZAI || "z-ai";
 /** Model chat — DeepSeek via Aria Router (pengganti z.ai; key z.ai lama sudah diganti di .z-ai-config). */
 export const ZAI_MODEL = "deepseek-flash";
+
+/** Baca .z-ai-config (dipakai SDK z-ai; berisi {baseUrl, apiKey} Aria). */
+function readZaiConfig(): { baseUrl?: string; apiKey?: string } {
+  for (const p of [path.join(process.cwd(), ".z-ai-config"), path.join(os.homedir(), ".z-ai-config"), "/etc/.z-ai-config"]) {
+    try { return JSON.parse(fs.readFileSync(p, "utf8")) as { baseUrl?: string; apiKey?: string }; } catch { /* coba lokasi berikutnya */ }
+  }
+  return {};
+}
+const zaiCfg = readZaiConfig();
+
+/** Provider LLM teks — semuanya OpenAI-compatible (POST {baseUrl}/chat/completions). */
+export const LLM_PROVIDERS = {
+  /** Aria Router (default) — key dari .z-ai-config. */
+  aria: { baseUrl: zaiCfg.baseUrl || "https://router.ariaseta.com/v1", apiKey: zaiCfg.apiKey || "", model: ZAI_MODEL },
+  /** 1min.ai — key dari env ONEMIN_API_KEY. */
+  onemin: { baseUrl: "https://api.1min.ai/openai/v1", apiKey: process.env.ONEMIN_API_KEY || "", model: process.env.ONEMIN_MODEL || "gpt-4.1-mini" },
+  /** Gemini (jalur OpenAI-compatible) — key dari env GEMINI_API_KEY. */
+  gemini: { baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai", apiKey: process.env.GEMINI_API_KEY || "", model: process.env.GEMINI_MODEL || "gemini-2.5-flash" },
+} as const;
+export type LLMProviderId = keyof typeof LLM_PROVIDERS;
+/** Pilih provider via env LLM_PROVIDER (aria | onemin | gemini). */
+export const LLM_PROVIDER = process.env.LLM_PROVIDER || "aria";
