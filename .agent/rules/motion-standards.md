@@ -114,17 +114,23 @@ export const MOTION_STANDARDS = {
 
 ## Skill pendukung (lihat `.agent/skills/`)
 
+Satu salinan kanonis per skill, di top-level `.agent/skills/<nama>/`.
+Folder bundle upstream (`skills/`, `remotion-motion-graphics-skill/`,
+`claude-remotion-skill/`) sudah dihapus 27 Nov 2026 — isinya duplikat identik
+dengan salinan kanonis di top-level, plus contoh/demo upstream yang tidak
+dipakai proyek ini. Jangan instal ulang bundle tersebut.
+
 | Folder | Isi |
 |--------|-----|
-| `skills/` (remotion-dev) | 14 skill resmi Remotion: best-practices, captions, render, multimedia, elements, dsb. |
-| `remotion-motion-graphics-skill/` | 4 skill motion graphics: motion-graphics, cinematic-camera, article-highlights, terminal-inserts |
-| `claude-remotion-skill/` | Skill remotion-motion-graphics + contoh |
+| `remotion-best-practices/` dkk. | 14 skill resmi Remotion: best-practices, captions, render, multimedia, elements, dsb. |
+| `motion-graphics/`, `cinematic-camera/`, `article-highlights/`, `terminal-inserts/` | 4 skill motion graphics |
+| `remotion-motion-graphics/` | Skill remotion-motion-graphics + contoh |
 | `remotion-scenes/` | 201+ scene siap pakai (src/scenes) |
-| `remotion-bits/` | Komponen animasi jsrepo (SKILL.md di skills/remotion-bits) |
+| `remotion-bits/` | Komponen animasi jsrepo (SKILL.md di `remotion-bits/SKILL.md`) |
 
 Ketika membuat komposisi baru: **baca dulu skill relevan** (minimal
-`skills/skills/remotion-best-practices/SKILL.md` dan
-`remotion-motion-graphics-skill/skills/motion-graphics/SKILL.md`), baru tulis kode.
+`remotion-best-practices/SKILL.md` dan
+`motion-graphics/SKILL.md`), baru tulis kode.
 
 ## 8. Hukum desain bang-motion (skill terpasang di `.agent/skills/bang-motion`)
 
