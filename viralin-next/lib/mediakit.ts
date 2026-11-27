@@ -297,3 +297,85 @@ export async function zaiImageEdit(
   if (!b64) throw new Error("z-ai edit tidak mengembalikan gambar");
   await fs.writeFile(out, Buffer.from(b64, "base64"));
 }
+
+/* ── Video generatif gratis (z-ai image-to-video) ────────────────────── */
+
+type VideoTask = { id?: string; task_status?: string };
+
+/** Mulai task image-to-video z-ai → task id. Frame lokal dibaca → data URL
+ *  (base64) — SDK memPOST body apa adanya ke /video/generation. Gratis tapi
+ *  berkuota: saat 429 caller memutuskan fallback engine lain. */
+export async function zaiVideoStart(
+  imagePath: string,
+  prompt: string,
+  log?: (l: string) => void,
+  opts?: { duration?: number; fps?: number; quality?: "speed" | "quality" }
+): Promise<string> {
+  const buf = await fs.readFile(imagePath);
+  const mime = /\.(jpe?g)$/i.test(imagePath) ? "image/jpeg" : "image/png";
+  const dataUrl = `data:${mime};base64,${buf.toString("base64")}`;
+  log?.("[aivideo] kirim task image-to-video…");
+  const mod = await import("z-ai-web-dev-sdk");
+  const zai = await (mod.default ?? mod).create();
+  const t = (await zai.video.generations.create({
+    prompt,
+    image_url: dataUrl,
+    quality: opts?.quality || "speed",
+    with_audio: false,
+    fps: opts?.fps || 30,
+    duration: opts?.duration || 5,
+  })) as VideoTask;
+  if (!t?.id) throw new Error("z-ai video tidak mengembalikan task id");
+  return t.id;
+}
+
+const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+
+/** Poll hasil task video z-ai → URL mp4. 429/5xx ditunggu dgn backoff (kuota
+ *  sandbox bisa pulih beberapa menit kemudian) — total menunggu dibatasi maxWaitMs. */
+export async function zaiVideoWait(
+  taskId: string,
+  log?: (l: string) => void,
+  maxWaitMs = 8 * 60_000
+): Promise<string> {
+  const mod = await import("z-ai-web-dev-sdk");
+  const zai = await (mod.default ?? mod).create();
+  const t0 = Date.now();
+  let nextRetryDelay = 20_000;
+  while (Date.now() - t0 < maxWaitMs) {
+    await sleep(5000);
+    let st;
+    try {
+      st = (await zai.async.result.query(taskId)) as VideoTask & {
+        video_url?: string; url?: string; video?: string;
+        video_result?: Array<{ url: string }>;
+      };
+    } catch (e) {
+      const msg = String((e as Error).message || e);
+      if (/429|too many requests/i.test(msg)) {
+        log?.(`[aivideo] kuota 429 — tunggu ${nextRetryDelay / 1000}s…`);
+        await sleep(nextRetryDelay);
+        nextRetryDelay = Math.min(nextRetryDelay * 2, 60_000);
+        continue;
+      }
+      if (/^timeout|500|502|503/i.test(msg)) continue; // jitter jaringan — coba lagi
+      throw new Error("z-ai video poll: " + msg.slice(0, 120));
+    }
+    if (st?.task_status === "SUCCESS") {
+      const url = st.video_url || st.url || st.video || st.video_result?.[0]?.url;
+      if (!url) throw new Error("z-ai video sukses tanpa url");
+      return url;
+    }
+    if (st?.task_status === "FAIL") throw new Error("z-ai video gagal di server");
+  }
+  throw new Error("z-ai video timeout menunggu hasil");
+}
+
+/** Unduh file dari URL (hasil video gen) → path lokal. */
+export async function downloadTo(url: string, out: string): Promise<void> {
+  const r = await fetch(url);
+  if (!r.ok) throw new Error(`unduh gagal HTTP ${r.status}`);
+  const ab = Buffer.from(await r.arrayBuffer());
+  if (ab.length < 10_000) throw new Error("unduhan terlalu kecil — kemungkinan error page");
+  await fs.writeFile(out, ab);
+}

@@ -216,6 +216,107 @@ ${cards}
 </html>`;
 }
 
+/* ── mesin video hasil (semua gratis) ───────────────────────────────── */
+
+type Frame = {
+  no: number; detikMulai: number; detikSelesai: number; peran: string;
+  shot: string; visual: string; overlay: string; aksi: string; teksNaskah: string;
+  produk: boolean; img?: string;
+};
+
+/** Prompt gerak utk image-to-video: aksi avatar + visual frame → gerakan natural. */
+function motionPrompt(s: Shot, f: Frame, produk: string): string {
+  return (
+    `Animasikan foto ini menjadi klip video UGC vertikal yang hidup: ${f.aksi || s.aksi || "orang bergerak natural menghadap kamera"}. ` +
+    `${s.visual}. ${s.produk_tampil ? `Produk "${produk}" terlihat jelas dan menjadi fokus.` : ""} ` +
+    "Gerakan halus natural seperti kamera HP handheld, pencahayaan tetap sama, tanpa teks atau watermark."
+  );
+}
+
+/** Deteksi batas scene (cut) video referensi via ffmpeg scene detection.
+ *  Return daftar shot [{s,e}] berurutan — dasar pemotongan footage remix. */
+export async function detectScenes(src: string, log: Log): Promise<Array<{ s: number; e: number }>> {
+  try {
+    const r = await execRun([
+      "ffmpeg", "-i", src, "-an", "-vf", "select='gt(scene,0.27)',showinfo", "-f", "null", "-",
+    ]);
+    const times: number[] = [0];
+    const re = /pts_time:([\d.]+)/g;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(r.stderr))) {
+      const t = parseFloat(m[1]);
+      if (t > times[times.length - 1] + 0.4) times.push(t);
+    }
+    const dur = await mk.probeDur(src);
+    if (dur > times[times.length - 1] + 0.5) times.push(dur);
+    const sc: Array<{ s: number; e: number }> = [];
+    for (let i = 0; i < times.length - 1; i++) {
+      const s = times[i], e = times[i + 1];
+      if (e - s >= 1.0) sc.push({ s, e });
+      else if (sc.length) sc[sc.length - 1].e = e; // shot pendek → gabung ke sebelumnya
+      else sc.push({ s, e });
+    }
+    log(`[remix] ${sc.length} shot footage referensi terdeteksi`);
+    return sc.length ? sc : [{ s: 0, e: dur }];
+  } catch {
+    log("[remix] scene detection gagal — pakai footage penuh");
+    return [{ s: 0, e: await mk.probeDur(src) }];
+  }
+}
+
+/** Bagi kebutuhan durasi beat ke atas shot footage: berjalan berurutan, tiap shot
+ *  dipakai bertahap sebelum pindah ke shot berikutnya (hindari pengulangan). */
+export function planWindows(
+  scenes: Array<{ s: number; e: number }>,
+  segDurs: number[]
+): Array<{ s: number; e: number }> {
+  const windows: Array<{ s: number; e: number }> = [];
+  let si = 0, off = 0;
+  for (const d of segDurs) {
+    let w: { s: number; e: number } | null = null;
+    for (let tries = 0; tries < scenes.length; tries++) {
+      const sc = scenes[si % scenes.length];
+      const s = sc.s + off;
+      if (s + d <= sc.e + 0.01) { w = { s, e: s + d }; break; }
+      si++; off = 0;
+    }
+    if (!w) {
+      const sc = scenes[si % scenes.length];
+      w = { s: sc.s, e: Math.min(sc.e, sc.s + d) }; // klip lebih pendek dari beat → tpad nanti
+    }
+    windows.push(w);
+    off += d;
+    const cur = scenes[si % scenes.length];
+    if (cur && off >= cur.e - cur.s - 0.01) { si++; off = 0; }
+  }
+  return windows;
+}
+
+/** Potong + transform footage referensi jadi 1 segmen 720x1280 senyap:
+ *  mirror (hflip) + grade warna + crop 9:16 + fps 30 (+ freeze belakang bila
+ *  footage lebih pendek dari beat, + sticker foto produk bila beat menampilkan produk). */
+export async function remixClip(opts: {
+  ref: string; s: number; e: number; dur: number; out: string; sticker?: string;
+}): Promise<void> {
+  const span = Math.max(0.8, Math.min(opts.e - opts.s, opts.dur));
+  const pad = span < opts.dur ? +(opts.dur - span).toFixed(2) : 0;
+  const base =
+    "hflip,eq=brightness=0.02:saturation=1.12:contrast=1.03," +
+    "crop=w='trunc(min(iw,ih*9/16)/2)*2':h=ih,scale=720:1280,fps=30" +
+    (pad > 0 ? `,tpad=stop_mode=clone:stop_duration=${pad}` : "");
+  const cmd = opts.sticker
+    ? [
+        "ffmpeg", "-y", "-ss", String(opts.s), "-t", String(span), "-i", opts.ref, "-i", opts.sticker,
+        "-filter_complex",
+        `[0:v]${base}[bg];[1:v]scale=420:-2,pad=iw+16:ih+16:8:8:color=white[st];[bg][st]overlay=(W-w)/2:H-h-150`,
+        "-t", String(opts.dur),
+      ]
+    : ["ffmpeg", "-y", "-ss", String(opts.s), "-t", String(span), "-i", opts.ref, "-vf", base, "-t", String(opts.dur)];
+  cmd.push("-c:v", "libx264", "-preset", "veryfast", "-crf", "22", "-pix_fmt", "yuv420p", "-an", opts.out);
+  const r = await execRun(cmd);
+  if (r.code !== 0) throw new Error("remix: " + tailErr(r.stderr));
+}
+
 /* ── runner ──────────────────────────────────────────────────────────── */
 
 export async function run(ctx: ToolCtx): Promise<void> {
@@ -265,43 +366,58 @@ export async function run(ctx: ToolCtx): Promise<void> {
     await persist(job);
   }
 
-  // ── 1. unduh video referensi ───────────────────────────────────────
-  log("[sumber] mengunduh video referensi…");
-  await mk.ytdlpFetch(
-    [
-      "--no-cache-dir", "--no-warnings", "--newline",
-      "-S", "res:720", "-N", "4",
-      "--merge-output-format", "mp4",
-      "-o", path.join(dir, "ref.%(ext)s"),
-    ],
-    inputs.source,
-    inputs.cookies,
-    log
-  );
+  // ── 1. unduh video referensi (atau salin dari upload user) ─────────
   let src = "";
-  for (const f of await fs.readdir(dir)) {
-    if (f.startsWith("ref.")) src = path.join(dir, f);
-  }
-  if (!src) throw new Error("file referensi tidak ditemukan setelah unduh");
-  if (!src.endsWith(".mp4")) {
-    const mp4 = src.replace(/\.\w+$/, ".mp4");
-    const rm = await execRun(["ffmpeg", "-y", "-i", src, "-c", "copy", "-movflags", "+faststart", mp4]);
-    if (rm.code !== 0) throw new Error("konversi ke mp4 gagal: " + tailErr(rm.stderr));
-    src = mp4;
+  if (inputs.source.startsWith("<uploadId>:")) {
+    const upId = inputs.source.slice(11).replace(/[^a-zA-Z0-9._-]/g, "");
+    const from = path.join(mk.UPLOAD_DIR, upId);
+    if (!(await fs.stat(from).then(() => true).catch(() => false))) {
+      throw new Error("file referensi upload tidak ditemukan: " + upId);
+    }
+    src = path.join(dir, "ref" + (path.extname(upId) || ".mp4"));
+    await fs.copyFile(from, src);
+    log(`[sumber] pakai upload referensi ${upId} (${((await fs.stat(from)).size / 1e6).toFixed(1)} MB)`);
+  } else {
+    log("[sumber] mengunduh video referensi…");
+    await mk.ytdlpFetch(
+      [
+        "--no-cache-dir", "--no-warnings", "--newline",
+        "-S", "res:720", "-N", "4",
+        "--merge-output-format", "mp4",
+        "-o", path.join(dir, "ref.%(ext)s"),
+      ],
+      inputs.source,
+      inputs.cookies,
+      log
+    );
+    for (const f of await fs.readdir(dir)) {
+      if (f.startsWith("ref.")) src = path.join(dir, f);
+    }
+    if (!src) throw new Error("file referensi tidak ditemukan setelah unduh");
+    if (!src.endsWith(".mp4")) {
+      const mp4 = src.replace(/\.\w+$/, ".mp4");
+      const rm = await execRun(["ffmpeg", "-y", "-i", src, "-c", "copy", "-movflags", "+faststart", mp4]);
+      if (rm.code !== 0) throw new Error("konversi ke mp4 gagal: " + tailErr(rm.stderr));
+      src = mp4;
+    }
   }
   const pr = await execRun(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "json", src]);
   const durRef = parseFloat(JSON.parse(pr.stdout).format?.duration || "0");
   log(`[probe] referensi ${Math.round(durRef)}s`);
 
-  // ── 2. transkrip referensi ─────────────────────────────────────────
+  // ── 2. transkrip referensi (video tanpa audio → transkrip kosong) ──
   const wav = path.join(dir, "ref-audio.wav");
+  let transkrip = "";
   const ax = await execRun(["ffmpeg", "-y", "-i", src, "-vn", "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le", wav]);
-  if (ax.code !== 0) throw new Error("ekstrak audio gagal: " + tailErr(ax.stderr));
-  const info = await mk.transcribe(wav, dir, log);
-  const transkrip = info.segments
-    .map((s) => `[${s.start.toFixed(1)}–${s.end.toFixed(1)}s] ${s.text}`)
-    .join("\n")
-    .slice(0, 5000);
+  if (ax.code === 0) {
+    const info = await mk.transcribe(wav, dir, log);
+    transkrip = info.segments
+      .map((s) => `[${s.start.toFixed(1)}–${s.end.toFixed(1)}s] ${s.text}`)
+      .join("\n")
+      .slice(0, 5000);
+  } else {
+    log("[whisper] referensi tanpa audio — bedah struktur dari durasi saja");
+  }
 
   // ── 3. LLM #1 — bedah struktur konten referensi ────────────────────
   log("[ai] menganalisis struktur konten referensi…");
@@ -376,10 +492,7 @@ export async function run(ctx: ToolCtx): Promise<void> {
 
   // ── 6. gambar AI per frame (mode "ai") — avatar jadi REFERENSI agar
   //      wajah/identitas konsisten di semua frame (z-ai image-edit) ────
-  const frames: Array<{
-    no: number; detikMulai: number; detikSelesai: number; peran: string;
-    shot: string; visual: string; overlay: string; aksi: string; teksNaskah: string; img?: string;
-  }> = [];
+  const frames: Frame[] = [];
   const avatarAbs = avatarFile ? path.join(dir, avatarFile) : "";
   for (let i = 0; i < shots.length; i++) {
     const s = shots[i];
@@ -427,6 +540,7 @@ export async function run(ctx: ToolCtx): Promise<void> {
       overlay: s.overlay,
       aksi: s.aksi,
       teksNaskah: b.teks,
+      produk: s.produk_tampil,
       img,
     });
   }
@@ -479,10 +593,14 @@ export async function run(ctx: ToolCtx): Promise<void> {
   );
   job.files!.push({ file: "ugc-caption.srt", label: "Caption SRT (siap tempel editor)", kind: "subtitle" });
 
-  // ── 10. RENDER VIDEO HASIL — frame storyboard × durasi beat (zoom pelan)
-  //        + voiceover + caption dibakar → ugc-video.mp4 siap post di TikTok ──
+  // ── 10. RENDER VIDEO HASIL — 3 mesin gratis, pilih otomatis/manual ──
+  //        zai      : frame storyboard → klip video BERGERAK (image-to-video, berkuota)
+  //        remix    : potongan footage ASLI video referensi (mirror+grade+crop 9:16
+  //                   + sticker produk) + voiceover & caption baru — pasti jalan, gratis
+  //        kenburns : gambar frame di-zoom pelan (paling murah, "foto bergerak")
+  //        auto     : probe z-ai 1 frame → kuota habis/gagal → remix → kenburns
   if (voBytes > 0) {
-    log("[video] menyusun video draft dari storyboard…");
+    log("[video] menyusun video hasil…");
     try {
       // durasi voiceover → skala durasi tiap beat agar caption sinkron
       const pv = await execRun(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "json", speech]);
@@ -492,27 +610,154 @@ export async function run(ctx: ToolCtx): Promise<void> {
       const factor = voDur > 1 ? voDur / sumBeat : 1;
       const segDurs = beatDurs.map((d) => +(d * factor).toFixed(2));
 
-      // segmen per frame: gambar → klip 540x960 dengan zoom pelan (Ken Burns)
+      let engine = ["zai", "remix", "kenburns"].includes(inputs.video_engine || "")
+        ? inputs.video_engine!
+        : "auto";
+
+      // segmen per frame — engine zai
       const segFiles: string[] = [];
-      for (let i = 0; i < frames.length; i++) {
-        const imgAbs = frames[i].img
-          ? path.join(dir, frames[i].img)
-          : avatarAbs || "";
-        const segOut = path.join(dir, `seg-${String(i + 1).padStart(2, "0")}.mp4`);
-        const frames25 = Math.max(25, Math.round(segDurs[i] * 25));
-        if (imgAbs) {
-          const rr = await execRun([
-            "ffmpeg", "-y", "-i", imgAbs,
-            "-vf",
-            "scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920," +
-              `zoompan=z='min(zoom+0.0009,1.14)':d=${frames25}:s=540x960:fps=25`,
-            "-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
-            "-pix_fmt", "yuv420p", "-an", segOut,
-          ]);
-          if (rr.code !== 0) throw new Error(`segmen ${i + 1}: ` + tailErr(rr.stderr));
+      const mkKenburns = async (imgAbs: string, out: string, dur: number): Promise<void> => {
+        const fr30 = Math.max(30, Math.round(dur * 30));
+        const rr = await execRun([
+          "ffmpeg", "-y", "-i", imgAbs,
+          "-vf",
+          "scale=720:1280:force_original_aspect_ratio=increase,crop=720:1280," +
+            `zoompan=z='min(zoom+0.0011,1.16)':d=${fr30}:s=720x1280:fps=30`,
+          "-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
+          "-pix_fmt", "yuv420p", "-an", out,
+        ]);
+        if (rr.code !== 0) throw new Error("kenburns: " + tailErr(rr.stderr));
+      };
+      const mkFromZai = async (clipPath: string, out: string, dur: number): Promise<void> => {
+        const d = await mk.probeDur(clipPath);
+        const pad = d < dur - 0.2 ? +(dur - d).toFixed(2) : 0;
+        const vf =
+          "scale=720:1280:force_original_aspect_ratio=increase,crop=720:1280,fps=30" +
+          (pad > 0 ? `,tpad=stop_mode=clone:stop_duration=${pad}` : "");
+        const rr = await execRun([
+          "ffmpeg", "-y", "-i", clipPath, "-vf", vf, "-t", String(dur),
+          "-c:v", "libx264", "-preset", "veryfast", "-crf", "22",
+          "-pix_fmt", "yuv420p", "-an", out,
+        ]);
+        if (rr.code !== 0) throw new Error("norm klip AI: " + tailErr(rr.stderr));
+      };
+
+      // engine auto → probe z-ai dgn frame pertama yang punya gambar
+      let probeDone = -1; // index frame yang sudah jadi klip dari probe
+      if (engine === "auto") {
+        const probeIdx = frames.findIndex((f) => f.img);
+        if (probeIdx < 0) {
+          engine = "kenburns";
+          log("[video] mode storyboard teks → mesin ken burns");
         } else {
+          try {
+            const t = await mk.zaiVideoStart(
+              path.join(dir, frames[probeIdx].img!),
+              motionPrompt(shots[probeIdx], frames[probeIdx], produk),
+              log, { duration: 5, fps: 30 }
+            );
+            const url = await mk.zaiVideoWait(t, log, 120_000); // probe: menunggu dibatasi
+            const probeRaw = path.join(dir, "probe-zai.mp4");
+            await mk.downloadTo(url, probeRaw);
+            await mkFromZai(probeRaw, path.join(dir, `seg-${String(probeIdx + 1).padStart(2, "0")}.mp4`), segDurs[probeIdx]);
+            await fs.rm(probeRaw, { force: true });
+            probeDone = probeIdx;
+            engine = "zai";
+            log(`[video] mesin: AI video z-ai — frame ${probeIdx + 1} bergerak (probe sukses)`);
+            await persist(job);
+          } catch (e) {
+            engine = "remix";
+            log(
+              `[video] AI video tak tersedia (${String((e as Error).message || e).slice(0, 80)}) ` +
+                "→ mesin REMIX: potongan footage asli video referensi + voiceover baru"
+            );
+            await persist(job);
+          }
+        }
+      }
+
+      // engine zai → kirim semua task frame sekaligus (diproses paralel server) lalu poll
+      const zaiTasks: Array<{ i: number; id: string }> = [];
+      if (engine === "zai") {
+        for (let i = 0; i < frames.length; i++) {
+          if (!frames[i].img || i === probeDone) continue;
+          try {
+            const id = await mk.zaiVideoStart(
+              path.join(dir, frames[i].img!),
+              motionPrompt(shots[i], frames[i], produk),
+              log, { duration: 5, fps: 30 }
+            );
+            zaiTasks.push({ i, id });
+          } catch (e) {
+            log(`[aivideo] frame ${i + 1} gagal dikirim (${String((e as Error).message || e).slice(0, 60)}) → fallback lokal`);
+          }
+        }
+        log(`[aivideo] ${zaiTasks.length} task dikirim — menunggu hasil…`);
+      }
+
+      // remiks plan (lazy): scene detect + jendela potongan + sticker produk
+      let windows: Array<{ s: number; e: number }> = [];
+      let sticker: string | undefined;
+      const ensureRemix = async (): Promise<void> => {
+        if (windows.length) return;
+        if (produkFile) {
+          sticker = path.join(dir, "produk-sticker.png");
+          const rs = await execRun([
+            "ffmpeg", "-y", "-i", path.join(dir, produkFile), "-vf", "scale=420:-2", "-frames:v", "1", sticker,
+          ]);
+          if (rs.code !== 0) sticker = undefined;
+        }
+        windows = planWindows(await detectScenes(src, log), segDurs);
+      };
+
+      for (let i = 0; i < frames.length; i++) {
+        const segOut = path.join(dir, `seg-${String(i + 1).padStart(2, "0")}.mp4`);
+        if (i === probeDone) {
+          segFiles.push(segOut); // sudah dibuat saat probe auto
+          log(`[video] segmen ${i + 1}/${frames.length} (${segDurs[i]}s) — klip AI dari probe`);
+          await persist(job);
+          continue;
+        }
+        const imgAbs = frames[i].img ? path.join(dir, frames[i].img!) : avatarAbs || "";
+        let done = false;
+        // 1) klip AI video
+        const t = zaiTasks.find((z) => z.i === i);
+        if (t) {
+          try {
+            const url = await mk.zaiVideoWait(t.id, log);
+            const raw = path.join(dir, `raw-${String(i + 1).padStart(2, "0")}.mp4`);
+            await mk.downloadTo(url, raw);
+            await mkFromZai(raw, segOut, segDurs[i]);
+            await fs.rm(raw, { force: true });
+            done = true;
+            log(`[video] frame ${i + 1}: klip AI video bergerak jadi`);
+          } catch (e) {
+            log(`[aivideo] frame ${i + 1} gagal (${String((e as Error).message || e).slice(0, 60)}) → fallback lokal`);
+          }
+        }
+        // 2) remix footage referensi
+        if (!done && engine === "remix") {
+          try {
+            await ensureRemix();
+            await remixClip({
+              ref: src, s: windows[i]?.s ?? 0, e: windows[i]?.e ?? segDurs[i],
+              dur: segDurs[i], out: segOut,
+              sticker: frames[i].produk ? sticker : undefined,
+            });
+            done = true;
+            log(`[video] frame ${i + 1}: footage referensi di-remix (${(windows[i]?.s ?? 0).toFixed(1)}s)` +
+                (frames[i].produk && sticker ? " + sticker produk" : ""));
+          } catch (e) {
+            log(`[video] frame ${i + 1} remix gagal (${String((e as Error).message || e).slice(0, 60)}) → fallback ken burns`);
+          }
+        }
+        // 3) ken burns dari gambar frame / avatar
+        if (!done && imgAbs) {
+          await mkKenburns(imgAbs, segOut, segDurs[i]);
+          log(`[video] frame ${i + 1}: gambar storyboard bergerak (ken burns)`);
+        } else if (!done) {
           const rr = await execRun([
-            "ffmpeg", "-y", "-f", "lavfi", "-i", `color=c=0x14120f:s=540x960:d=${segDurs[i]}`,
+            "ffmpeg", "-y", "-f", "lavfi", "-i", `color=c=0x14120f:s=720x1280:d=${segDurs[i]}`,
             "-c:v", "libx264", "-preset", "veryfast", "-crf", "28", "-an", segOut,
           ]);
           if (rr.code !== 0) throw new Error(`segmen ${i + 1} (fallback): ` + tailErr(rr.stderr));
@@ -522,7 +767,7 @@ export async function run(ctx: ToolCtx): Promise<void> {
         await persist(job);
       }
 
-      // concat segmen → base
+      // concat segmen → base (re-encode agar seragam antar engine)
       const listFile = path.join(dir, "concat.txt");
       await fs.writeFile(
         listFile,
@@ -530,7 +775,11 @@ export async function run(ctx: ToolCtx): Promise<void> {
         "utf8"
       );
       const baseMp4 = path.join(dir, "ugc-base.mp4");
-      const rc = await execRun(["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", listFile, "-c", "copy", baseMp4]);
+      const rc = await execRun([
+        "ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", listFile,
+        "-c:v", "libx264", "-preset", "veryfast", "-crf", "22",
+        "-pix_fmt", "yuv420p", "-an", baseMp4,
+      ]);
       if (rc.code !== 0) throw new Error("concat: " + tailErr(rc.stderr));
 
       // SRT khusus video (waktu hasil skala) lalu bakar + mux voiceover
@@ -556,8 +805,10 @@ export async function run(ctx: ToolCtx): Promise<void> {
       ]);
       if (fr.code !== 0) throw new Error("final: " + tailErr(fr.stderr));
 
-      // bersihkan file perantara
-      for (const f of [...segFiles, baseMp4, listFile]) await fs.rm(f, { force: true }).catch(() => {});
+      // bersihkan file perantara (segmen + raw klip AI + probe + concat)
+      const junk = (await fs.readdir(dir)).filter((f) => /^(seg-|raw-|probe-zai)/.test(f));
+      for (const f of [...junk, baseMp4, listFile]) await fs.rm(path.join(dir, f), { force: true }).catch(() => {});
+      log(`[video] mesin selesai: ${engine}`);
 
       // thumbnail + registrasi sebagai klip (muncul di pemutar video panel)
       await execRun(["ffmpeg", "-y", "-ss", "1", "-i", videoOut, "-frames:v", "1", "-vf", "scale=180:320", path.join(dir, "ugc-video.jpg")]);
