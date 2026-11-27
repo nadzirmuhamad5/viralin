@@ -8,6 +8,7 @@ import {
   PY, DEPS, YTDLP, ENV, WHISPER_MODEL, WHISPER_LANG, UPLOAD_DIR, FONTS_DIR, ZAI_BIN,
 } from "./config";
 import { whisperdTranscribe, isWhisperdUnavailable, type WhisperInfo } from "./whisperd";
+import type { CreateImageEditBody } from "z-ai-web-dev-sdk";
 
 export { PY, DEPS, YTDLP, ENV, WHISPER_MODEL, WHISPER_LANG, UPLOAD_DIR, FONTS_DIR };
 
@@ -280,7 +281,7 @@ export async function zaiImageEdit(
   refImage: string,
   out: string,
   log?: (l: string) => void,
-  size?: string
+  size?: CreateImageEditBody["size"]
 ): Promise<void> {
   log?.("[ai] mengedit gambar dari referensi (z-ai edit)…");
   const buf = await fs.readFile(refImage);
@@ -290,7 +291,7 @@ export async function zaiImageEdit(
   const zai = await (mod.default ?? mod).create();
   const resp = await zai.images.generations.edit({
     prompt,
-    images: [{ url: dataUrl }],
+    image: dataUrl,
     size: size || "768x1344",
   });
   const b64 = resp?.data?.[0]?.base64;
