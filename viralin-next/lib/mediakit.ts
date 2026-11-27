@@ -233,24 +233,35 @@ export async function renderKlip(opts: {
 export async function zaiChat(system: string, prompt: string, log?: (l: string) => void): Promise<string> {
   // Semua provider OpenAI-compatible: POST {baseUrl}/chat/completions, Bearer key.
   // SDK z-ai tidak dipakai di sini karena create()-nya hanya baca satu file config.
+  // Key dicoba berurutan; kalau satu key habis / tidak valid (401/402/403/429),
+  // otomatis pindah ke key berikutnya. 400/5xx bukan masalah key — langsung gagal.
   const p = LLM_PROVIDERS[LLM_PROVIDER as LLMProviderId];
   if (!p) throw new Error(`LLM_PROVIDER tidak dikenal: ${LLM_PROVIDER} (pilih: aria, onemin, gemini)`);
-  if (!p.apiKey) throw new Error(`LLM ${LLM_PROVIDER} belum punya API key (isi ${LLM_PROVIDER === "aria" ? ".z-ai-config" : LLM_PROVIDER === "onemin" ? "ONEMIN_API_KEY" : "GEMINI_API_KEY"})`);
-  log?.(`[ai] memanggil LLM (${LLM_PROVIDER}/${p.model})…`);
-  const res = await fetch(`${p.baseUrl}/chat/completions`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", Authorization: `Bearer ${p.apiKey}` },
-    body: JSON.stringify({
-      model: p.model,
-      messages: [
-        ...(system ? [{ role: "system" as const, content: system }] : []),
-        { role: "user" as const, content: prompt },
-      ],
-    }),
+  if (!p.apiKeys.length) throw new Error(`LLM ${LLM_PROVIDER} belum punya API key (isi ${p.keyEnv})`);
+  log?.(`[ai] memanggil LLM (${LLM_PROVIDER}/${p.model}, ${p.apiKeys.length} key)…`);
+  const body = JSON.stringify({
+    model: p.model,
+    messages: [
+      ...(system ? [{ role: "system" as const, content: system }] : []),
+      { role: "user" as const, content: prompt },
+    ],
   });
-  if (!res.ok) throw new Error(`LLM ${LLM_PROVIDER} gagal (${res.status}): ${await res.text()}`);
-  const j = (await res.json()) as { choices?: Array<{ message?: { content?: string } }> };
-  return (j.choices?.[0]?.message?.content || "").trim();
+  let lastErr = "";
+  for (let i = 0; i < p.apiKeys.length; i++) {
+    const res = await fetch(`${p.baseUrl}/chat/completions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${p.apiKeys[i]}` },
+      body,
+    });
+    if (res.ok) {
+      const j = (await res.json()) as { choices?: Array<{ message?: { content?: string } }> };
+      return (j.choices?.[0]?.message?.content || "").trim();
+    }
+    lastErr = `(${res.status}) ${(await res.text()).slice(0, 300)}`;
+    if (![401, 402, 403, 429].includes(res.status)) break; // bukan masalah key
+    if (i < p.apiKeys.length - 1) log?.(`[ai] key ${i + 1}/${p.apiKeys.length} gagal ${lastErr.slice(0, 80)}, coba key berikutnya…`);
+  }
+  throw new Error(`LLM ${LLM_PROVIDER} gagal: semua ${p.apiKeys.length} key dicoba. Terakhir: ${lastErr}`);
 }
 
 /** Ambil objek JSON dari balasan LLM (tahan markdown fence). */

@@ -37,14 +37,19 @@ function readZaiConfig(): { baseUrl?: string; apiKey?: string } {
 }
 const zaiCfg = readZaiConfig();
 
+/** Pecah env var berisi beberapa key (pisah koma) jadi array; key kosong dibuang. */
+function splitKeys(v?: string): string[] {
+  return (v || "").split(",").map((s) => s.trim()).filter(Boolean);
+}
+
 /** Provider LLM teks — semuanya OpenAI-compatible (POST {baseUrl}/chat/completions). */
 export const LLM_PROVIDERS = {
-  /** Aria Router (default) — key dari .z-ai-config. */
-  aria: { baseUrl: zaiCfg.baseUrl || "https://router.ariaseta.com/v1", apiKey: zaiCfg.apiKey || "", model: ZAI_MODEL },
-  /** 1min.ai — key dari env ONEMIN_API_KEY. */
-  onemin: { baseUrl: "https://api.1min.ai/openai/v1", apiKey: process.env.ONEMIN_API_KEY || "", model: process.env.ONEMIN_MODEL || "gpt-4.1-mini" },
-  /** Gemini (jalur OpenAI-compatible) — key dari env GEMINI_API_KEY. */
-  gemini: { baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai", apiKey: process.env.GEMINI_API_KEY || "", model: process.env.GEMINI_MODEL || "gemini-2.5-flash" },
+  /** Aria Router (default) — key dari env ARIA_API_KEYS, lalu .z-ai-config. */
+  aria: { baseUrl: zaiCfg.baseUrl || "https://router.ariaseta.com/v1", apiKeys: [...splitKeys(process.env.ARIA_API_KEYS), ...(zaiCfg.apiKey ? [zaiCfg.apiKey] : [])], keyEnv: "ARIA_API_KEYS atau .z-ai-config", model: ZAI_MODEL },
+  /** 1min.ai — key dari env ONEMIN_API_KEYS (ONEMIN_API_KEY tunggal juga dibaca). */
+  onemin: { baseUrl: "https://api.1min.ai/openai/v1", apiKeys: [...splitKeys(process.env.ONEMIN_API_KEYS), ...splitKeys(process.env.ONEMIN_API_KEY)], keyEnv: "ONEMIN_API_KEYS", model: process.env.ONEMIN_MODEL || "gpt-4.1-mini" },
+  /** Gemini (jalur OpenAI-compatible) — key dari env GEMINI_API_KEYS (GEMINI_API_KEY tunggal juga dibaca). */
+  gemini: { baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai", apiKeys: [...splitKeys(process.env.GEMINI_API_KEYS), ...splitKeys(process.env.GEMINI_API_KEY)], keyEnv: "GEMINI_API_KEYS", model: process.env.GEMINI_MODEL || "gemini-2.5-flash" },
 } as const;
 export type LLMProviderId = keyof typeof LLM_PROVIDERS;
 /** Pilih provider via env LLM_PROVIDER (aria | onemin | gemini). */
