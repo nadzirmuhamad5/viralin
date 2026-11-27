@@ -5,7 +5,7 @@ import { createHash, randomBytes } from "crypto";
 import { run, tailErr } from "./exec";
 import { buildAss, type Word } from "./captions";
 import {
-  PY, DEPS, YTDLP, ENV, WHISPER_MODEL, WHISPER_LANG, UPLOAD_DIR, FONTS_DIR, ZAI_BIN,
+  PY, DEPS, YTDLP, ENV, WHISPER_MODEL, WHISPER_LANG, UPLOAD_DIR, FONTS_DIR, ZAI_BIN, ZAI_MODEL,
 } from "./config";
 import { whisperdTranscribe, isWhisperdUnavailable, type WhisperInfo } from "./whisperd";
 import type { CreateImageEditBody } from "z-ai-web-dev-sdk";
@@ -231,7 +231,7 @@ export async function renderKlip(opts: {
 export async function zaiChat(system: string, prompt: string, log?: (l: string) => void): Promise<string> {
   const out = path.join("/tmp", "vl-llm-" + Math.random().toString(36).slice(2, 8) + ".json");
   log?.("[ai] memanggil LLM gratis (z-ai)…");
-  const r = await run([ZAI_BIN, "chat", "-p", prompt, ...(system ? ["-s", system] : []), "-o", out], {
+  const r = await run([ZAI_BIN, "chat", "-m", ZAI_MODEL, "-p", prompt, ...(system ? ["-s", system] : []), "-o", out], {
     timeout: 240_000,
   });
   if (r.code !== 0) throw new Error("z-ai chat gagal: " + tailErr(r.stderr));

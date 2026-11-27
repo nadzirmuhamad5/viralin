@@ -23,3 +23,5 @@ export const FONTS_DIR = path.join(process.cwd(), "assets", "caption-fonts");
 
 /** CLI z-ai (chat GLM + image gen) — bisa ditimpa via VL_ZAI. */
 export const ZAI_BIN = process.env.VL_ZAI || "z-ai";
+/** Model chat termurah di akun ini — Flash 4.x gratis tidak ada di daftar model key ini. */
+export const ZAI_MODEL = "glm-5.3-flash";
