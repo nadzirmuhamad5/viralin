@@ -21,10 +21,6 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     </Link>
   );
 
-  // CSS Lab (/lab) menampilkan UI penuhnya sendiri — header, hero, dan footer
-  // sendiri. Shell sidebar disembunyikan agar lab tampil imersif full-viewport.
-  if (path?.startsWith("/lab")) return <>{children}</>;
-
   return (
     <div className="shell">
       <aside className={`side${open ? " open" : ""}`}>
@@ -34,7 +30,6 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         <div className="side-group">Menu</div>
         {nl("/", "🏠", "Beranda")}
         {nl("/fitur", "🧰", "Semua Fitur")}
-        {nl("/lab", "🎨", "CSS Lab")}
         <div className="side-group">Tools</div>
         {LIVE.map((t) => nl(`/fitur/${t.id}`, t.icon, t.name))}
         <div className="side-group">Info</div>
