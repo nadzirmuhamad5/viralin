@@ -1,0 +1,11 @@
+.git
+.github
+node_modules
+.next
+.deps
+data
+deploy
+.agent
+*.log
+.DS_Store
+viralin-next/public/konten
