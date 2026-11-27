@@ -278,9 +278,10 @@ export function extractJson<T>(s: string): T {
   }
 }
 
-/** Gambar dari teks via 1min.ai (IMAGE_GENERATOR, ideogram-3, FLASH = paling murah/cepat).
- *  Key 1min.ai dari Pengaturan/env (provider onemin). `size` harus resolusi valid
- *  ideogram-3 (mis. "768x1344"); tanpa size → vertikal 9:16. */
+/** Gambar dari teks via 1min.ai (IMAGE_GENERATOR, Flux Schnell = paling murah).
+ *  Key 1min.ai dari Pengaturan/env (provider onemin). Model bisa ditimpa via
+ *  env ONEMIN_IMAGE_MODEL (mis. ideogram-3 — promptObject-nya ikut menyesuaikan).
+ *  `size` "WxH" dipetakan ke aspect ratio Flux terdekat; tanpa size → 9:16. */
 export async function zaiImage(
   prompt: string,
   out: string,
@@ -290,16 +291,21 @@ export async function zaiImage(
   log?.("[ai] membuat gambar (1min.ai image)…");
   const apiKeys = await getProviderKeys("onemin");
   if (!apiKeys.length) throw new Error("key 1min.ai belum dipasang — isi di Pengaturan → Provider LLM → onemin");
-  const model = process.env.ONEMIN_IMAGE_MODEL || "ideogram-3";
+  const model = process.env.ONEMIN_IMAGE_MODEL || "black-forest-labs/flux-schnell";
+  const isFlux = model.includes("flux");
+  // aspect ratio Flux terdekat dari "WxH" (hanya 768x1344 = 9:16 yang dipakai sekarang)
+  const ratios: Array<[number, string]> = [[1, "1:1"], [16 / 9, "16:9"], [9 / 16, "9:16"], [3 / 2, "3:2"], [2 / 3, "2:3"], [4 / 5, "4:5"], [5 / 4, "5:4"]];
+  const ratio = (() => {
+    const m = size?.match(/^(\d+)x(\d+)$/);
+    const r = m ? +m[1] / +m[2] : 9 / 16;
+    return ratios.reduce((a, b) => (Math.abs(b[0] - r) < Math.abs(a[0] - r) ? b : a))[1];
+  })();
   const body = JSON.stringify({
     type: "IMAGE_GENERATOR",
     model,
-    promptObject: {
-      prompt,
-      num_images: 1,
-      rendering_speed: "FLASH",
-      ...(size ? { resolution: size } : { aspect_ratio: "9x16" }),
-    },
+    promptObject: isFlux
+      ? { prompt, num_images: 1, aspect_ratio: ratio, num_inference_steps: 4, go_fast: true, megapixels: "1", output_quality: 80 }
+      : { prompt, num_images: 1, rendering_speed: "FLASH", ...(size ? { resolution: size } : { aspect_ratio: "9x16" }) },
   });
   let lastErr = "";
   for (let i = 0; i < apiKeys.length; i++) {
@@ -315,10 +321,11 @@ export async function zaiImage(
       continue;
     }
     const j = (await res.json()) as {
-      aiRecord?: { aiRecordDetail?: { responseObject?: { data?: Array<{ url?: string }> }; resultObject?: string[] } };
+      aiRecord?: { temporaryUrl?: string; aiRecordDetail?: { responseObject?: { data?: Array<{ url?: string }> }; resultObject?: string[] } };
     };
     const url =
       j.aiRecord?.aiRecordDetail?.responseObject?.data?.[0]?.url ||
+      j.aiRecord?.temporaryUrl || // Flux: responseObject kosong, URL ada di temporaryUrl
       j.aiRecord?.aiRecordDetail?.resultObject?.find((u) => u.startsWith("http"));
     if (!url) throw new Error("1min.ai image tidak mengembalikan URL gambar");
     const img = await fetch(url, { signal: AbortSignal.timeout(120_000) });
