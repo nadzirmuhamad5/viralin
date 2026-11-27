@@ -15,7 +15,7 @@ export type LLMFileSettings = {
   keys?: Partial<Record<LLMProviderId, string[]>>;
 };
 
-const PROVIDERS: LLMProviderId[] = ["aria", "onemin", "gemini", "openrouter"];
+const PROVIDERS: LLMProviderId[] = ["aria", "onemin", "gemini", "openrouter", "ollama"];
 
 async function readFile(): Promise<LLMFileSettings> {
   try {
@@ -92,6 +92,7 @@ export async function resolveLLM(): Promise<ResolvedLLM> {
       onemin: keysFor("onemin").length,
       gemini: keysFor("gemini").length,
       openrouter: keysFor("openrouter").length,
+      ollama: keysFor("ollama").length,
     },
   };
 }

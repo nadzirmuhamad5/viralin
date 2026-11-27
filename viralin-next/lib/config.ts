@@ -52,7 +52,9 @@ export const LLM_PROVIDERS = {
   gemini: { baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai", apiKeys: [...splitKeys(process.env.GEMINI_API_KEYS), ...splitKeys(process.env.GEMINI_API_KEY)], keyEnv: "GEMINI_API_KEYS", model: process.env.GEMINI_MODEL || "gemini-2.5-flash" },
   /** OpenRouter — key dari env OPENROUTER_API_KEYS (OPENROUTER_API_KEY tunggal juga dibaca). */
   openrouter: { baseUrl: "https://openrouter.ai/api/v1", apiKeys: [...splitKeys(process.env.OPENROUTER_API_KEYS), ...splitKeys(process.env.OPENROUTER_API_KEY)], keyEnv: "OPENROUTER_API_KEYS", model: process.env.OPENROUTER_MODEL || "openrouter/free" },
+  /** Ollama Cloud — key dari env OLLAMA_API_KEYS (OLLAMA_API_KEY tunggal juga dibaca). */
+  ollama: { baseUrl: "https://ollama.com/v1", apiKeys: [...splitKeys(process.env.OLLAMA_API_KEYS), ...splitKeys(process.env.OLLAMA_API_KEY)], keyEnv: "OLLAMA_API_KEYS", model: process.env.OLLAMA_MODEL || "deepseek-v4.1-flash" },
 } as const;
 export type LLMProviderId = keyof typeof LLM_PROVIDERS;
-/** Pilih provider via env LLM_PROVIDER (aria | onemin | gemini | openrouter). */
+/** Pilih provider via env LLM_PROVIDER (aria | onemin | gemini | openrouter | ollama). */
 export const LLM_PROVIDER = process.env.LLM_PROVIDER || "aria";
