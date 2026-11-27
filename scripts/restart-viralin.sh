@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # Restart Viralin MODE PRODUCTION (next start :3000 + static :8080) setelah recycle.
-# Pakai: bash /home/z/my-project/scripts/restart-viralin.sh
+# Pakai: bash scripts/restart-viralin.sh   (dari root repo)
 # Pakai: REBUILD=1 bash …  → paksa build ulang dulu (kalau kodingan berubah)
 
 set -u
-BASE=/home/z/my-project
+BASE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 APP=$BASE/viralin-next
 LOGDIR=$BASE/deploy
 mkdir -p "$LOGDIR"

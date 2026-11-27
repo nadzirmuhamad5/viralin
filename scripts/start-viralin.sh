@@ -2,9 +2,10 @@
 # Start server Viralin (worker render) dengan env dependensi python yang benar.
 # Dipakai manual & oleh cron keep-alive — JANGAN hardcode env di tempat lain.
 set -e
-cd /home/z/my-project/viralin-next
-export VL_DEPS=/home/z/my-project/.deps      # edge-tts, faster-whisper, yt-dlp
-export VL_HF_HOME=/home/z/my-project/.cache  # cache model whisper small
+BASE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$BASE/viralin-next"
+export VL_DEPS="$BASE/.deps"      # edge-tts, faster-whisper, yt-dlp
+export VL_HF_HOME="$BASE/.cache"  # cache model whisper small
 # kalau sudah hidup, selesai (idempotent)
 if curl -s -o /dev/null --max-time 3 http://127.0.0.1:3000/; then
   echo "server sudah hidup"

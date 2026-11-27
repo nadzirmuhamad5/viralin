@@ -4,9 +4,9 @@
 # Tujuan: riwayat job selamat dari recycle sandbox — data/ di-gitignore & hilang
 # saat recycle; backup-data/ di-track git sehingga ikut repo.
 # Catatan: file video/media TIDAK dibackup (besar) — hasil render re-render saja.
-# Dipanggil watchdog tiap menit: bash /home/z/my-project/scripts/backup-data.sh
+# Dipanggil watchdog tiap menit: bash scripts/backup-data.sh
 set -u
-BASE=/home/z/my-project
+BASE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 APP=$BASE/viralin-next
 SRC="$APP/data/jobs"
 DST="$APP/backup-data/jobs"
