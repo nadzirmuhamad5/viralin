@@ -184,6 +184,12 @@ export const TOOLS: ToolDef[] = [
           { value: "id-ID-ArdiNeural", label: "Ardi — Pria 🇮🇩" },
           { value: "id-ID-GadisNeural", label: "Gadis — Wanita 🇮🇩" },
         ] },
+      { key: "vostyle", label: "Gaya voice-over", type: "select", default: "netral",
+        options: [
+          { value: "netral", label: "Netral — jelas & santai" },
+          { value: "hype", label: "Hype — cepat & bersemangat" },
+          { value: "mengejek", label: "Mengejek — sarkastik, nyebelin" },
+        ] },
       { key: "simpanDrive", label: "Storage hasil", type: "select", default: "tidak",
         options: [
           { value: "tidak", label: "Simpan di server (download dari sini)" },

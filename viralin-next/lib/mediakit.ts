@@ -176,13 +176,14 @@ export async function ttsSynth(
   voice: string,
   out: string,
   rate = "+0%",
-  log: (l: string) => void
+  log: (l: string) => void,
+  pitch = "+0Hz"
 ): Promise<void> {
   const txtFile = out + ".txt";
   await fs.writeFile(txtFile, text, "utf8");
   const worker = path.join(process.cwd(), "worker", "tts.py");
   log(`[tts] ${voice} · ${text.length} karakter…`);
-  const r = await run([PY, worker, "--voice", voice, "--text-file", txtFile, "--out", out, "--rate", rate], {
+  const r = await run([PY, worker, "--voice", voice, "--text-file", txtFile, "--out", out, `--rate=${rate}`, `--pitch=${pitch}`], {
     env: ENV, timeout: 300_000,
   });
   await fs.rm(txtFile, { force: true });

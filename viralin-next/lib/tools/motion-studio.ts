@@ -13,6 +13,7 @@ import path from "path";
 import * as mk from "../mediakit";
 import { run as runCmd, tailErr } from "../exec";
 import { motionSectionDurs, type MotionStudioProps, type WarnaId } from "../motion";
+import { voStyle } from "../vo-styles";
 import { gdriveConfigured, gdriveUpload } from "../storage-drive";
 import type { ToolCtx } from "./_shared";
 
@@ -23,6 +24,7 @@ export async function run(ctx: ToolCtx): Promise<void> {
   const { job, dir, inputs, log } = ctx;
   let judul: string; let items: string[]; let cta: string; let anims: string[] = []; let imgsP: string[] = [];
   let hookNar = ""; let ctaNar = ""; let bulletNars: string[] = []; // narasi per bagian dari LLM
+  const style = voStyle(inputs.vostyle); // gaya VO: arahan naskah + prosody TTS
   if ((inputs.mode || "manual") === "ai" || (inputs.mode || "manual") === "berita") {
     const isBerita = (inputs.mode || "manual") === "berita";
     let material: string;
@@ -51,6 +53,7 @@ export async function run(ctx: ToolCtx): Promise<void> {
       (isBerita
         ? "Bahan di bawah adalah headline berita NYATA — buat versi viralnya TANPA mengarang fakta tambahan; sudut pandang/opini boleh. "
         : "") +
+      "Gaya bicara narasi (field \"n\" dan \"cn\"): " + style.prompt + ". " +
       "Balas HANYA JSON valid tanpa penjelasan: {\"judul\":\"HOOK KAPITAL maks 40 karakter\", " +
       "\"n\":\"1 kalimat narasi pembuka yg menjelaskan hook (yg dibaca voice-over)\", " +
       "\"bullets\":[{\"t\":\"poin pendek maks 60 karakter TANPA titik di akhir\",\"anim\":\"money\",\"img\":\"deskripsi visual 2-5 kata\"," +
@@ -149,7 +152,7 @@ export async function run(ctx: ToolCtx): Promise<void> {
       const raw2 = await mk.zaiChat(
         "Kamu penulis naskah video pendek Indonesia. Dari struktur motion graphic berikut, tulis NARASI voice-over " +
         "per bagian: bagian 1 pembuka (hook), bagian 2 dst tiap poin, bagian terakhir ajakan penutup. Bahasa santai " +
-        "mengalir, 1-2 kalimat per bagian, langsung isi tanpa basa-basi. Balas HANYA JSON valid: " +
+        "mengalir, 1-2 kalimat per bagian, langsung isi tanpa basa-basi. Gaya bicara: " + style.prompt + ". Balas HANYA JSON valid: " +
         `{"nar":["bagian 1","bagian 2",…]} — jumlah elemen PERSIS ${nSec} sesuai urutan.`,
         JSON.stringify({ judul, bullets: items, cta }), log);
       const m2 = raw2.match(/\{[\s\S]*\}/);
@@ -170,7 +173,7 @@ export async function run(ctx: ToolCtx): Promise<void> {
         else {
           const mp3 = path.join(dir, `nar-${i}.mp3`);
           try {
-            await mk.ttsSynth(narr[i], voice, mp3, "+0%", log);
+            await mk.ttsSynth(narr[i], voice, mp3, style.rate, log, style.pitch);
             const d = await mk.probeDur(mp3);
             mp3s.push(mp3);
             delays.push(Math.round((acc + LEAD) * 1000));
