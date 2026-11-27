@@ -7,6 +7,7 @@ import { runTool } from "./toolrun";
 import { ytdlpFetch, transcribe, type Seg } from "./mediakit";
 import { run, tailErr } from "./exec";
 import { FONTS_DIR, MAX_SECONDS } from "./config";
+import { queueStats } from "./queue";
 
 const STAGES: Array<[string, string]> = [
   ["download", "⬇️ yt-dlp — unduh video"],
@@ -51,6 +52,9 @@ export function createJob(
     clips: [],
   };
   jobs.set(id, job);
+  // log pipeline pertama: job lahir + kondisi antrean saat itu
+  const q = queueStats();
+  pushLog(job, `[job] dibuat · tool ${tool}${preset ? ` · preset ${preset}` : ""} · antrean ${q.active} jalan / ${q.waiting} menunggu`);
   return job;
 }
 
@@ -77,9 +81,22 @@ function pushLog(job: Job, line: string, persistToo = false) {
   const hh = String(t.getHours()).padStart(2, "0");
   const mm = String(t.getMinutes()).padStart(2, "0");
   const ss = String(t.getSeconds()).padStart(2, "0");
-  job.logs.push(`[${hh}:${mm}:${ss}] ${line.slice(0, 240)}`);
+  const text = `[${hh}:${mm}:${ss}] ${line.slice(0, 240)}`;
+  job.logs.push(text);
   if (job.logs.length > 160) job.logs.splice(0, job.logs.length - 140);
+  // mirror ke console server — jejak pipeline tiap job ikut tercatat di log proses
+  console.log(`[pipeline ${job.id}] ${line.slice(0, 240)}`);
   if (persistToo) void persist(job);
+}
+
+/** Ringkasan tahap utk log akhir pipeline: nama:status(durasi). */
+function stageSummary(job: Job): string {
+  return job.stages
+    .map((s) => {
+      const dur = s.since && s.ms ? `(${((s.ms - s.since) / 1000).toFixed(1)}s)` : "";
+      return `${s.name}:${s.status}${dur}`;
+    })
+    .join(" · ");
 }
 
 /** Deteksi cut scene. Video di-downscale ke 160×90 dulu — skor scene cukup akurat
@@ -155,10 +172,12 @@ function allWords(segs: Seg[]): Word[] {
 export async function runJob(job: Job): Promise<void> {
   job.status = "run";
   await persist(job);
+  const t0 = Date.now();
   const dir = path.join(DATA, job.id);
   await fs.mkdir(dir, { recursive: true });
   let curStage = "";
   let logTick = 0;
+  pushLog(job, `[job] mulai diproses · antre ${((t0 - job.createdAt) / 1000).toFixed(0)}s`, true);
 
   // ── jalur tool generik (semua fitur selain klip-ai) ────────────────
   if (job.tool && job.tool !== "klip-ai") {
@@ -173,12 +192,13 @@ export async function runJob(job: Job): Promise<void> {
       setStage(job, "hasil", "run");
       job.status = "done";
       setStage(job, "hasil", "done");
-      pushLog(job, "✅ selesai", true);
+      pushLog(job, `✅ selesai · ${stageSummary(job)} · total ${((Date.now() - t0) / 1000).toFixed(1)}s`, true);
       return;
     } catch (e) {
       job.status = "fail";
       job.error = String((e as Error)?.message || e);
       for (const s of job.stages) if (s.status === "run") s.status = "fail";
+      pushLog(job, `❌ gagal${curStage ? ` di tahap ${curStage}` : ""} · ${stageSummary(job)} · total ${((Date.now() - t0) / 1000).toFixed(1)}s`, true);
       pushLog(job, "❌ " + job.error, true);
       await persist(job);
       return;
@@ -294,7 +314,7 @@ export async function runJob(job: Job): Promise<void> {
         (capAss
           ? `,subtitles=filename='${capAss}':fontsdir='${FONTS_DIR}'`
           : "");
-      const t0 = Date.now();
+      const tClip = Date.now();
       const rr = await run([
         "ffmpeg", "-y", "-ss", String(p.start), "-i", src,
         "-t", (p.end - p.start).toFixed(2),
@@ -320,17 +340,19 @@ export async function runJob(job: Job): Promise<void> {
         preset: presetId,
       });
       job.clips = [...clips];
-      pushLog(job, `[render] klip ${i + 1}/${proposals.length} jadi dalam ${((Date.now() - t0) / 1000).toFixed(1)}s · ${(st.size / 1e6).toFixed(2)} MB`, true);
+      pushLog(job, `[render] klip ${i + 1}/${proposals.length} jadi dalam ${((Date.now() - tClip) / 1000).toFixed(1)}s · ${(st.size / 1e6).toFixed(2)} MB`, true);
     }
     setStage(job, "render", "done");
 
     job.status = "done";
+    pushLog(job, `✅ selesai · ${stageSummary(job)} · total ${((Date.now() - t0) / 1000).toFixed(1)}s`, true);
     await persist(job);
   } catch (e) {
     const msg = String((e as Error)?.message || e);
     job.error = msg;
     job.status = "fail";
     if (curStage) setStage(job, curStage, "fail");
+    pushLog(job, `❌ gagal di tahap ${curStage || "?"} · ${stageSummary(job)} · total ${((Date.now() - t0) / 1000).toFixed(1)}s`, true);
     pushLog(job, "❌ " + msg, true);
     await persist(job);
   }
