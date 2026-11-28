@@ -185,6 +185,45 @@ export function sanitizeMoments(
   return out.sort((a, b) => a.start - b.start);
 }
 
+/** Deteksi tipe konten dari transkrip via skor keyword (ala ClipFlow ai.py).
+ *  Gaming: kata berat ×3 (×2 kalau <3), kata ringan ×1 (hanya kalau kata berat >=3),
+ *  penalti ×0.6 kalau banyak kata non-gameplay. Tipe dipakai kalau skornya
+ *  mencapai ambang (gaming >=5, lainnya >=3), kalau tidak → "general". */
+export type ContentType = "gaming" | "podcast" | "music" | "tutorial" | "general";
+export function detectContentType(segs: Seg[]): { type: ContentType; scores: Record<string, number> } {
+  const text = segs.map((s) => s.text).join(" ").toLowerCase();
+  const has = (kws: string[]) => kws.filter((k) => text.includes(k)).length;
+  const gamingHeavy = ["teamfight", "team fight", "clutch", "savage", "maniac", "legendary", "pentakill", "mvp", "turnamen", "tournament", "mlbb", "mobile legends", "pubg", "valorant", "free fire", "mpl", "ranked", "baron", "lord", "turtle", "jungle", "gank", "kill streak", "double kill", "triple kill", "first blood", "gold lane", "mid lane"];
+  const gamingLight = ["kill", "tower", "hero", "skill", "ultimate", "respawn", "dragon", "creep", "minion", "farm", "gg", "rank", "mythic", "damage", "heal", "carry", "support", "tank", "assassin", "mage", "marksman", "fighter", "match", "round"];
+  const nonGameplay = ["subscribe", "like video", "follow", "share", "notification", "comment", "instagram", "tiktok", "youtube channel", "discord", "donasi", "lobby", "hero selection", "draft pick", "menu", "settings", "review", "unboxing", "selamat datang", "halo semuanya", "terima kasih", "jangan lupa", "sampai jumpa"];
+  const podcastKw = ["cerita", "ngobrol", "bahas", "podcast", "menurut saya", "saya rasa", "opini", "pendapat", "topik", "episode", "pendengar", "tamu", "wawancara", "interview", "sharing", "pengalaman", "curhat", "story time", "jadi gini", "beneran", "serius", "cinta", "pacar", "mantan", "hubungan", "bucin", "trending", "viral", "fyp"];
+  const musicKw = ["lirik", "lyrics", "lagu", "music", "nyanyi", "chorus", "verse", "bridge", "reff", "melody", "album", "music video", "cover", "remix", "dj", "beat", "instrumental", "chord", "kunci gitar"];
+  const tutorialKw = ["tutorial", "cara", "how to", "langkah", "mudah", "pertama", "kedua", "selanjutnya", "setting", "pengaturan", "install", "download", "ikuti", "caranya", "langkahnya"];
+  const heavy = has(gamingHeavy);
+  const light = has(gamingLight);
+  let gaming = heavy >= 3 ? heavy * 3 + light : heavy * 2;
+  if (has(nonGameplay) > 8) gaming = Math.floor(gaming * 0.6);
+  const scores: Record<string, number> = {
+    gaming,
+    podcast: has(podcastKw),
+    music: has(musicKw),
+    tutorial: has(tutorialKw),
+  };
+  const best = (Object.entries(scores).sort((a, b) => b[1] - a[1])[0] || ["general", 0]) as [string, number];
+  const minScore: Record<string, number> = { gaming: 5, podcast: 3, music: 3, tutorial: 3 };
+  const type = best[1] >= (minScore[best[0]] ?? 99) ? (best[0] as ContentType) : "general";
+  return { type, scores };
+}
+
+/** Instruksi tambahan per tipe konten untuk system prompt LLM (1 baris tiap tipe). */
+const TYPE_PROMPT: Record<ContentType, string> = {
+  gaming: "Konten gaming: cari momen aksi (teamfight, kill beruntun, clutch, comeback, curi objective) — abaikan intro, lobby, draft pick, dan ajakan subscribe.",
+  podcast: "Konten podcast/obrolan: cari opini tajam, cerita lucu, momen emosional, perdebatan, atau pengakuan mengejutkan — yang bisa berdiri sendiri sebagai klip.",
+  music: "Konten musik: cari bagian chorus/hook yang paling catchy, drop, atau momen energi tinggi.",
+  tutorial: "Konten tutorial: cari langkah penting, tips kunci, demo, dan hasil akhir (before/after).",
+  general: "",
+};
+
 /** Potong transkrip ke budget karakter dengan sampling merata (awal/tengah/akhir tetap terwakili). */
 function capTranscript(lines: string[], maxChars: number): string {
   const full = lines.join("\n");
@@ -194,7 +233,7 @@ function capTranscript(lines: string[], maxChars: number): string {
 }
 
 /** Satu jendela 25 menit → maks 2 momen via LLM. Gagal → null (jendela lain tetap jalan). */
-async function pickWindowLLM(winSegs: Seg[], winStart: number, winEnd: number, dur: number, job: Job, cs: ClipSettings): Promise<Proposal[] | null> {
+async function pickWindowLLM(winSegs: Seg[], winStart: number, winEnd: number, dur: number, job: Job, cs: ClipSettings, ctype: ContentType = "general"): Promise<Proposal[] | null> {
   const transkrip = capTranscript(
     winSegs.map((s) => `[${s.start.toFixed(1)}–${s.end.toFixed(1)}s] ${s.text}`),
     25000
@@ -203,7 +242,8 @@ async function pickWindowLLM(winSegs: Seg[], winStart: number, winEnd: number, d
   try {
     const raw = await zaiChat(
       'Kamu analis konten viral TikTok/Reels Indonesia. Pilih momen terbaik dari transkrip untuk dijadikan klip pendek. Balas HANYA JSON: {"momen":[{"mulai":0,"selesai":30,"skor":8.5,"alasan":"..."}]}. ' +
-        `Maks 2 momen, tiap momen ${cs.minDur}-${cs.maxDur} detik (ideal ±30 detik), tidak tumpang tindih, dalam durasi video. Skor 1-10 seberapa viral momen itu (hook, emosi, layak dishare). Prioritaskan hook kuat di awal, momen emosional/energi tinggi, dan kalimat yang utuh (jangan potong di tengah kalimat).`,
+        `Maks 2 momen, tiap momen ${cs.minDur}-${cs.maxDur} detik (ideal ±30 detik), tidak tumpang tindih, dalam durasi video. Skor 1-10 seberapa viral momen itu (hook, emosi, layak dishare). Prioritaskan hook kuat di awal, momen emosional/energi tinggi, dan kalimat yang utuh (jangan potong di tengah kalimat).` +
+        (TYPE_PROMPT[ctype] ? ` ${TYPE_PROMPT[ctype]}` : ""),
       `Durasi video: ${Math.round(dur)}s. Jendela analisis ini: ${winStart}–${winEnd}s — pilih momen HANYA dalam jendela ini.\nTranskrip ber-timestamp:\n${transkrip}`,
       (l) => pushLog(job, l)
     );
@@ -225,6 +265,9 @@ async function pickWindowLLM(winSegs: Seg[], winStart: number, winEnd: number, d
  *  Gagal / tidak valid → null, pemanggil pakai pickProposals rule-based. */
 async function pickMomentsLLM(segs: Seg[], dur: number, job: Job, cs: ClipSettings): Promise<Proposal[] | null> {
   const WIN = 1500; // 25 menit per jendela
+  // deteksi tipe konten sekali dari seluruh transkrip → prompt LLM disesuaikan
+  const ctype = detectContentType(segs).type;
+  pushLog(job, `[ai] tipe konten: ${ctype}`, true);
   const windows = new Map<number, Seg[]>();
   for (const s of segs) {
     const w = Math.floor(s.start / WIN);
@@ -236,7 +279,7 @@ async function pickMomentsLLM(segs: Seg[], dur: number, job: Job, cs: ClipSettin
   for (const [w, winSegs] of [...windows.entries()].sort((a, b) => a[0] - b[0])) {
     const winStart = w * WIN;
     const winEnd = Math.min((w + 1) * WIN, dur);
-    const got = await pickWindowLLM(winSegs, winStart, winEnd, dur, job, cs);
+    const got = await pickWindowLLM(winSegs, winStart, winEnd, dur, job, cs, ctype);
     if (got) all.push(...got);
   }
   if (!all.length) return null;
