@@ -325,6 +325,31 @@ export function applyMotionBoost(
   }));
 }
 
+/** Kepadatan dialog dalam [start, end): kata per detik (ala ClipFlow podcast.py).
+ *  Dialog padat = percakapan intens = kandidat highlight podcast. */
+export function dialogueDensity(segs: Seg[], start: number, end: number): number {
+  const words = (t: string) => t.split(/\s+/).filter(Boolean).length;
+  let w = 0;
+  for (const s of segs) {
+    if (s.start >= start && s.start < end) w += words(s.text);
+  }
+  const d = end - start;
+  return d > 0 ? w / d : 0;
+}
+
+/** Bonus skor dari kepadatan dialog: di atas rata-rata bicara normal (~2.5 kata/dtk)
+ *  dapat bonus sampai +0.5. Sinyal ranking tambahan (tie-breaker yang lembut). */
+export function applyDensityBoost(
+  ranked: Array<{ mulai: number; selesai: number; skor: number }>,
+  segs: Seg[]
+): Array<{ mulai: number; selesai: number; skor: number }> {
+  return ranked.map((m) => {
+    const d = dialogueDensity(segs, m.mulai, m.selesai);
+    const bonus = Math.min(0.5, Math.max(0, (d - 2.5) * 0.2));
+    return { ...m, skor: r2(m.skor + bonus) };
+  });
+}
+
 /** Pilih momen pakai LLM (provider dari Pengaturan — Gemini kalau provider=gemini).
  *  Video panjang dianalisis per jendela 25 menit agar tiap call LLM hemat token,
  *  lalu kandidat dari semua jendela digabung dan dipilih BERDASAR SKOR VIRAL:
@@ -348,10 +373,13 @@ async function pickMomentsLLM(segs: Seg[], dur: number, job: Job, cs: ClipSettin
     if (got) all.push(...got);
   }
   if (!all.length) return null;
-  // sinyal motion (gaming): boost skor momen yang aksinya tinggi (maks +1.0)
-  const ranked = applyMotionBoost(
-    all.map((p) => ({ mulai: p.start, selesai: p.end, skor: p.score })),
-    motion
+  // sinyal ranking tambahan: motion (gaming, maks +1.0) + kepadatan dialog (maks +0.5)
+  const ranked = applyDensityBoost(
+    applyMotionBoost(
+      all.map((p) => ({ mulai: p.start, selesai: p.end, skor: p.score })),
+      motion
+    ),
+    segs
   ).sort((a, b) => (b.skor ?? 0) - (a.skor ?? 0));
   // pilih berdasar nilai keviralan, bukan jumlah tetap
   const viral = ranked.filter((m) => (m.skor ?? 0) >= cs.minScore);
