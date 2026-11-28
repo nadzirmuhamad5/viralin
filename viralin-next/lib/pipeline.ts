@@ -350,6 +350,41 @@ export function applyDensityBoost(
   });
 }
 
+/** Skor pacing 0-10 untuk [start, end) dari transkrip (ala ClipFlow ai_enhanced #8).
+ *  Bicara cepat + kalimat pendek bervariasi + banyak tanda seru/tanya = pacing tinggi. */
+export function pacingScore(segs: Seg[], start: number, end: number): number {
+  const text = segs.filter((s) => s.start >= start && s.start < end).map((s) => s.text).join(" ");
+  const words = text.split(/\s+/).filter(Boolean);
+  const d = end - start;
+  if (d <= 0 || !words.length) return 0;
+  const wps = words.length / d;
+  const sentences = text.split(/[.!?]+/).map((s) => s.trim()).filter((s) => s.length > 3);
+  const sentLens = sentences.map((s) => s.split(/\s+/).filter(Boolean).length);
+  const avgSentLen = sentLens.length ? sentLens.reduce((a, b) => a + b, 0) / sentLens.length : 0;
+  const sentVar = sentLens.length ? sentLens.reduce((a, l) => a + (l - avgSentLen) ** 2, 0) / sentLens.length : 0;
+  const sentStd = Math.sqrt(sentVar);
+  const punctEnergy = ((text.split("!").length - 1) + (text.split("?").length - 1)) / words.length;
+  let pace = 3.0;
+  if (wps > 3.0) pace += Math.min(3.0, (wps - 2.5) * 2.0);
+  else if (wps < 1.5) pace -= 1.0;
+  if (sentLens.length >= 2) pace += Math.min(1.5, sentStd / 5.0);
+  pace += Math.min(1.5, punctEnergy * 3.0);
+  if (avgSentLen < 8 && sentLens.length >= 3) pace += 0.5;
+  return Math.max(0, Math.min(10, Math.round(pace * 10) / 10));
+}
+
+/** Bonus skor dari pacing: di atas pacing sedang (5/10) dapat bonus sampai +0.5. */
+export function applyPaceBoost(
+  ranked: Array<{ mulai: number; selesai: number; skor: number }>,
+  segs: Seg[]
+): Array<{ mulai: number; selesai: number; skor: number }> {
+  return ranked.map((m) => {
+    const p = pacingScore(segs, m.mulai, m.selesai);
+    const bonus = Math.min(0.5, Math.max(0, (p - 5) * 0.1));
+    return { ...m, skor: r2(m.skor + bonus) };
+  });
+}
+
 /** Pilih momen pakai LLM (provider dari Pengaturan — Gemini kalau provider=gemini).
  *  Video panjang dianalisis per jendela 25 menit agar tiap call LLM hemat token,
  *  lalu kandidat dari semua jendela digabung dan dipilih BERDASAR SKOR VIRAL:
@@ -373,11 +408,14 @@ async function pickMomentsLLM(segs: Seg[], dur: number, job: Job, cs: ClipSettin
     if (got) all.push(...got);
   }
   if (!all.length) return null;
-  // sinyal ranking tambahan: motion (gaming, maks +1.0) + kepadatan dialog (maks +0.5)
-  const ranked = applyDensityBoost(
-    applyMotionBoost(
-      all.map((p) => ({ mulai: p.start, selesai: p.end, skor: p.score })),
-      motion
+  // sinyal ranking tambahan: motion (gaming, maks +1.0) + kepadatan dialog (maks +0.5) + pacing (maks +0.5)
+  const ranked = applyPaceBoost(
+    applyDensityBoost(
+      applyMotionBoost(
+        all.map((p) => ({ mulai: p.start, selesai: p.end, skor: p.score })),
+        motion
+      ),
+      segs
     ),
     segs
   ).sort((a, b) => (b.skor ?? 0) - (a.skor ?? 0));
