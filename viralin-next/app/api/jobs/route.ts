@@ -65,8 +65,12 @@ export async function POST(req: Request) {
     inputs.sources?.split(/\n+/)[0] ||
     (typeof body?.url === "string" ? body.url.trim() : "");
 
+  // preset caption: top-level (hero landing page) ATAU inputs.preset (ToolRunner).
+  // Sebelumnya ToolRunner kirim preset di inputs tapi API cuma baca body.preset,
+  // jadi dropdown gaya caption di halaman tool tidak pernah kepakai.
+  const presetRaw = typeof body?.preset === "string" ? body.preset : inputs.preset;
   const preset =
-    typeof body?.preset === "string" && PRESETS[body.preset] ? body.preset : DEFAULT_PRESET;
+    typeof presetRaw === "string" && PRESETS[presetRaw] ? presetRaw : DEFAULT_PRESET;
   if (tool === "klip-ai" && !/^https?:\/\/\S+$/i.test(url)) {
     return Response.json({ error: "URL http(s) wajib diisi" }, { status: 400 });
   }

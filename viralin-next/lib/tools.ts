@@ -37,7 +37,17 @@ export const TOOLS: ToolDef[] = [
   {
     id: "klip-ai", name: "Analisis AI", icon: "🤖", group: "Kliping AI", badge: "GRATIS", live: true,
     desc: "URL video → AI pilih momen viral → klip 9:16 + caption karaoke 30 preset klipers.",
-    fields: [SOURCE_FIELD],
+    fields: [
+      SOURCE_FIELD,
+      { key: "preset", label: "Gaya caption", type: "select", default: "bold-impact",
+        options: [], hint: "Diisi otomatis dari picker preset." },
+      { key: "min_score", label: "Skor viral min (1–10)", type: "number", default: "7",
+        hint: "Momen di bawah skor ini tidak diambil. Kalau tidak ada yang mencapai, ambil 3 skor tertinggi." },
+      { key: "max_clips", label: "Maks klip", type: "number", default: "6",
+        hint: "Maksimal klip yang dibuat per video." },
+      { key: "min_dur", label: "Durasi klip min (detik)", type: "number", default: "15" },
+      { key: "max_dur", label: "Durasi klip maks (detik)", type: "number", default: "45" },
+    ],
   },
   {
     id: "split-cam", name: "Split Cam", icon: "🪟", group: "Kliping AI", badge: "PRO", live: false,

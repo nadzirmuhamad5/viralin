@@ -101,7 +101,7 @@ function stageSummary(job: Job): string {
 
 type Proposal = { start: number; end: number; score: number };
 
-function pickProposals(segs: Seg[], cuts: number[], dur: number): Proposal[] {
+function pickProposals(segs: Seg[], cuts: number[], dur: number, maxClips = 6): Proposal[] {
   const words = (t: string) => t.split(/\s+/).filter(Boolean).length;
   const cands: Array<Proposal & { words: number }> = [];
   for (let i = 0; i < segs.length; i++) {
@@ -124,7 +124,7 @@ function pickProposals(segs: Seg[], cuts: number[], dur: number): Proposal[] {
   cands.sort((a, b) => b.score - a.score);
   const picked: Proposal[] = [];
   for (const c of cands) {
-    if (picked.length >= 6) break;
+    if (picked.length >= maxClips) break;
     if (picked.every((p) => c.end <= p.start || c.start >= p.end)) {
       picked.push({ start: c.start, end: c.end, score: c.score });
     }
@@ -132,7 +132,7 @@ function pickProposals(segs: Seg[], cuts: number[], dur: number): Proposal[] {
   if (!picked.length) {
     // fallback: window tunggal awal video / berbasis scene
     if (cuts.length >= 3) {
-      for (let i = 0; i < cuts.length - 1 && picked.length < 6; i++) {
+      for (let i = 0; i < cuts.length - 1 && picked.length < maxClips; i++) {
         const start = cuts[i];
         const end = cuts.find((t) => t > start + 15 && t <= start + 45);
         if (end && picked.every((p) => end <= p.start || start >= p.end)) {
@@ -147,17 +147,37 @@ function pickProposals(segs: Seg[], cuts: number[], dur: number): Proposal[] {
   return picked;
 }
 
-/** Validasi momen dari LLM: clamp ke durasi, 15-45 dtk, tidak tumpang tindih, maks `max`, urut. */
+/** Setting AI clipper (ala ClipFlow: min score, maks klip, durasi min/maks).
+ *  Dibaca dari form tool (job.inputs); nilai tidak valid → default. */
+export type ClipSettings = { minScore: number; maxClips: number; minDur: number; maxDur: number };
+export function clipSettings(inputs?: Record<string, string>): ClipSettings {
+  const num = (v: string | undefined, def: number, lo: number, hi: number) => {
+    const n = Number(v);
+    return Number.isFinite(n) ? Math.min(hi, Math.max(lo, n)) : def;
+  };
+  const minDur = num(inputs?.min_dur, 15, 5, 120);
+  const maxDur = Math.max(minDur, num(inputs?.max_dur, 45, 15, 300));
+  return {
+    minScore: num(inputs?.min_score, 7, 1, 10),
+    maxClips: Math.round(num(inputs?.max_clips, 6, 1, 10)),
+    minDur,
+    maxDur,
+  };
+}
+
+/** Validasi momen dari LLM: clamp ke durasi, minDur-maxDur dtk, tidak tumpang tindih, maks `max`, urut. */
 export function sanitizeMoments(
   momen: Array<{ mulai?: number; selesai?: number; skor?: number }>,
   dur: number,
-  max = 3
+  max = 3,
+  minDur = 15,
+  maxDur = 45
 ): Proposal[] {
   const out: Proposal[] = [];
   for (const m of momen || []) {
     const start = r2(Math.max(0, Number(m.mulai) || 0));
     const end = r2(Math.min(dur, Number(m.selesai) || 0));
-    if (end - start < 15 || end - start > 45) continue;
+    if (end - start < minDur || end - start > maxDur) continue;
     if (out.some((p) => start < p.end && end > p.start)) continue; // tumpang tindih
     out.push({ start, end, score: r2(Number(m.skor) || 0) });
     if (out.length >= max) break;
@@ -174,7 +194,7 @@ function capTranscript(lines: string[], maxChars: number): string {
 }
 
 /** Satu jendela 25 menit → maks 2 momen via LLM. Gagal → null (jendela lain tetap jalan). */
-async function pickWindowLLM(winSegs: Seg[], winStart: number, winEnd: number, dur: number, job: Job): Promise<Proposal[] | null> {
+async function pickWindowLLM(winSegs: Seg[], winStart: number, winEnd: number, dur: number, job: Job, cs: ClipSettings): Promise<Proposal[] | null> {
   const transkrip = capTranscript(
     winSegs.map((s) => `[${s.start.toFixed(1)}–${s.end.toFixed(1)}s] ${s.text}`),
     25000
@@ -183,12 +203,12 @@ async function pickWindowLLM(winSegs: Seg[], winStart: number, winEnd: number, d
   try {
     const raw = await zaiChat(
       'Kamu analis konten viral TikTok/Reels Indonesia. Pilih momen terbaik dari transkrip untuk dijadikan klip pendek. Balas HANYA JSON: {"momen":[{"mulai":0,"selesai":30,"skor":8.5,"alasan":"..."}]}. ' +
-        "Maks 2 momen, tiap momen 15-45 detik (ideal ±30 detik), tidak tumpang tindih, dalam durasi video. Skor 1-10 seberapa viral momen itu (hook, emosi, layak dishare). Prioritaskan hook kuat di awal, momen emosional/energi tinggi, dan kalimat yang utuh (jangan potong di tengah kalimat).",
+        `Maks 2 momen, tiap momen ${cs.minDur}-${cs.maxDur} detik (ideal ±30 detik), tidak tumpang tindih, dalam durasi video. Skor 1-10 seberapa viral momen itu (hook, emosi, layak dishare). Prioritaskan hook kuat di awal, momen emosional/energi tinggi, dan kalimat yang utuh (jangan potong di tengah kalimat).`,
       `Durasi video: ${Math.round(dur)}s. Jendela analisis ini: ${winStart}–${winEnd}s — pilih momen HANYA dalam jendela ini.\nTranskrip ber-timestamp:\n${transkrip}`,
       (l) => pushLog(job, l)
     );
     const j = extractJson<{ momen?: Array<{ mulai?: number; selesai?: number; skor?: number; alasan?: string }> }>(raw);
-    const out = sanitizeMoments(j.momen || [], dur, 2);
+    const out = sanitizeMoments(j.momen || [], dur, 2, cs.minDur, cs.maxDur);
     if (!out.length) return null;
     return out;
   } catch (e) {
@@ -200,10 +220,10 @@ async function pickWindowLLM(winSegs: Seg[], winStart: number, winEnd: number, d
 /** Pilih momen pakai LLM (provider dari Pengaturan — Gemini kalau provider=gemini).
  *  Video panjang dianalisis per jendela 25 menit agar tiap call LLM hemat token,
  *  lalu kandidat dari semua jendela digabung dan dipilih BERDASAR SKOR VIRAL:
- *  semua momen dengan skor >= 7 diambil (maks 6 klip); kalau tidak ada yang
- *  mencapai 7, ambil 3 skor tertinggi agar job tetap menghasilkan klip.
+ *  semua momen dengan skor >= minScore diambil (maks maxClips klip); kalau tidak
+ *  ada yang mencapai minScore, ambil 3 skor tertinggi agar job tetap menghasilkan klip.
  *  Gagal / tidak valid → null, pemanggil pakai pickProposals rule-based. */
-async function pickMomentsLLM(segs: Seg[], dur: number, job: Job): Promise<Proposal[] | null> {
+async function pickMomentsLLM(segs: Seg[], dur: number, job: Job, cs: ClipSettings): Promise<Proposal[] | null> {
   const WIN = 1500; // 25 menit per jendela
   const windows = new Map<number, Seg[]>();
   for (const s of segs) {
@@ -216,7 +236,7 @@ async function pickMomentsLLM(segs: Seg[], dur: number, job: Job): Promise<Propo
   for (const [w, winSegs] of [...windows.entries()].sort((a, b) => a[0] - b[0])) {
     const winStart = w * WIN;
     const winEnd = Math.min((w + 1) * WIN, dur);
-    const got = await pickWindowLLM(winSegs, winStart, winEnd, dur, job);
+    const got = await pickWindowLLM(winSegs, winStart, winEnd, dur, job, cs);
     if (got) all.push(...got);
   }
   if (!all.length) return null;
@@ -224,11 +244,9 @@ async function pickMomentsLLM(segs: Seg[], dur: number, job: Job): Promise<Propo
     .map((p) => ({ mulai: p.start, selesai: p.end, skor: p.score }))
     .sort((a, b) => (b.skor ?? 0) - (a.skor ?? 0));
   // pilih berdasar nilai keviralan, bukan jumlah tetap
-  const VIRAL_MIN = 7;
-  const VIRAL_MAX = 6;
-  const viral = ranked.filter((m) => (m.skor ?? 0) >= VIRAL_MIN);
-  const picked = viral.length ? viral.slice(0, VIRAL_MAX) : ranked.slice(0, 3);
-  const out = sanitizeMoments(picked, dur, VIRAL_MAX);
+  const viral = ranked.filter((m) => (m.skor ?? 0) >= cs.minScore);
+  const picked = viral.length ? viral.slice(0, cs.maxClips) : ranked.slice(0, 3);
+  const out = sanitizeMoments(picked, dur, cs.maxClips, cs.minDur, cs.maxDur);
   if (!out.length) return null;
   pushLog(job, `[ai] momen dipilih LLM: ${out.map((p) => `${p.start}–${p.end}s`).join(" · ")}`, true);
   return out;
@@ -346,7 +364,10 @@ export async function runJob(job: Job): Promise<void> {
     pushLog(job, "[scene] dilewati (mode audio-only)", true);
     // LLM dulu (provider dari Pengaturan — Gemini kalau provider=gemini);
     // gagal / tidak valid → fallback ke skor rule-based (kata + scene cut).
-    const proposals = (await pickMomentsLLM(segs, dur, job)) ?? pickProposals(segs, cuts, dur);
+    // Setting clipper (skor min, maks klip, durasi) dibaca dari form tool.
+    const cs = clipSettings(job.inputs);
+    pushLog(job, `[ai] setting: skor min ${cs.minScore} · maks ${cs.maxClips} klip · durasi ${cs.minDur}–${cs.maxDur} dtk`, true);
+    const proposals = (await pickMomentsLLM(segs, dur, job, cs)) ?? pickProposals(segs, cuts, dur, cs.maxClips);
     if (!proposals.length) throw new Error("tidak ada kandidat klip yang bisa dibuat");
     const first = segs.find((s) => s.text);
     job.title = (first?.text || `Klip dari ${job.url}`).slice(0, 60);
