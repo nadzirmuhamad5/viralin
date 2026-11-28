@@ -6,7 +6,7 @@ import { buildAss, DEFAULT_PRESET, type Word } from "./captions";
 import { runTool } from "./toolrun";
 import { ytdlpFetch, transcribe, zaiChat, extractJson, type Seg } from "./mediakit";
 import { run, tailErr } from "./exec";
-import { FONTS_DIR, MAX_SECONDS } from "./config";
+import { FONTS_DIR } from "./config";
 import { queueStats } from "./queue";
 
 const STAGES: Array<[string, string]> = [
@@ -335,9 +335,6 @@ export async function runJob(job: Job): Promise<void> {
     ]);
     const dur = parseFloat(JSON.parse(pr.stdout).format?.duration || "0");
     if (!dur) throw new Error("ffprobe gagal membaca durasi");
-    if (dur > MAX_SECONDS) {
-      throw new Error(`video ${Math.round(dur)}s > batas ${MAX_SECONDS}s — demo ini membatasi durasi`);
-    }
     job.sourceSeconds = r1(dur);
     pushLog(job, `[probe] durasi ${r1(dur)}s`, true);
     setStage(job, "probe", "done");

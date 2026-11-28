@@ -18,7 +18,6 @@ export const ENV: NodeJS.ProcessEnv = {
 
 export const WHISPER_MODEL = process.env.VL_WHISPER_MODEL || "small";
 export const WHISPER_LANG = process.env.VL_WHISPER_LANGUAGE || "id";
-export const MAX_SECONDS = Number(process.env.VL_MAX_SECONDS || 900); // 15 menit
 
 export const UPLOAD_DIR = path.join(process.cwd(), "data", "uploads");
 export const FONTS_DIR = path.join(process.cwd(), "assets", "caption-fonts");
