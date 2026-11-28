@@ -65,7 +65,7 @@ export const TOOLS: ToolDef[] = [
   },
   {
     id: "konten-tempel", name: "VIRAL Content Creator", icon: "🚀", group: "AI Generatif", badge: "VIRAL", live: true,
-    desc: "Satu ide → naskah LLM → suara TTS → background AI → video vertikal ber-caption. Faceless, gratis.",
+    desc: "Satu ide → naskah LLM → suara TTS → background AI / B-Roll video → video vertikal ber-caption. Faceless, gratis.",
     fields: [
       { key: "topik", label: "Ide / topik (kalau kosong, pakai naskah)", type: "text",
         placeholder: "3 fakta kopi susu gula aren bikin nagih" },
@@ -81,6 +81,9 @@ export const TOOLS: ToolDef[] = [
       { key: "bg", label: "Background", type: "select", default: "ai",
         options: [
           { value: "ai", label: "Gambar AI (z-ai)" }, { value: "gradient", label: "Gradient polos" },
+          { value: "broll-auto", label: "B-Roll video (otomatis: YouTube → Pexels)" },
+          { value: "broll-yt", label: "B-Roll YouTube" },
+          { value: "broll-pexels", label: "B-Roll Pexels (butuh PEXELS_API_KEY)" },
         ] },
       { key: "preset", label: "Gaya caption", type: "select", default: "bold-impact",
         options: [], hint: "Diisi otomatis dari picker preset." },
