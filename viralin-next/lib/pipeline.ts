@@ -6,7 +6,7 @@ import { buildAss, DEFAULT_PRESET, type Word } from "./captions";
 import { runTool } from "./toolrun";
 import { ytdlpFetch, transcribe, fetchVttSubs, zaiChat, extractJson, type Seg } from "./mediakit";
 import { run, tailErr } from "./exec";
-import { FONTS_DIR } from "./config";
+import { FONTS_DIR, PY } from "./config";
 import { queueStats } from "./queue";
 
 const STAGES: Array<[string, string]> = [
@@ -257,17 +257,82 @@ async function pickWindowLLM(winSegs: Seg[], winStart: number, winEnd: number, d
   }
 }
 
+/** Ambil skor motion per detik untuk video gaming (ala ClipFlow gaming.py).
+ *  Download video low-res (<=360p) lalu jalankan worker/motion.py (OpenCV,
+ *  CPU saja). Return Map detik->skor, atau null kalau gagal / OpenCV tidak ada
+ *  — pemanggil lanjut tanpa sinyal motion (fallback aman). */
+async function fetchMotion(
+  url: string,
+  dir: string,
+  cookies: string | undefined,
+  log: (l: string) => void
+): Promise<Map<number, number> | null> {
+  const low = path.join(dir, "motion.%(ext)s");
+  try {
+    await ytdlpFetch(
+      ["--no-cache-dir", "--no-warnings", "--newline",
+       "-f", "worstvideo[height<=360]/worstvideo/worst",
+       "-o", low],
+      url, cookies, log
+    );
+    let vid = "";
+    for (const f of await fs.readdir(dir)) {
+      if (f.startsWith("motion.")) vid = path.join(dir, f);
+    }
+    if (!vid) return null;
+    const outJson = path.join(dir, "motion.json");
+    const worker = path.join(process.cwd(), "worker", "motion.py");
+    const r = await run([PY, worker, vid, "--out", outJson], { timeout: 600_000 });
+    if (r.code !== 0) {
+      log(`[motion] gagal (OpenCV belum terpasang?) — lanjut tanpa sinyal motion`);
+      return null;
+    }
+    const data = JSON.parse(await fs.readFile(outJson, "utf-8")) as { points?: Array<{ time: number; score: number }> };
+    const map = new Map<number, number>();
+    for (const p of data.points || []) map.set(Math.floor(p.time), p.score);
+    if (!map.size) return null;
+    log(`[motion] ${map.size} titik motion siap`);
+    return map;
+  } catch (e) {
+    log(`[motion] gagal — lanjut tanpa sinyal motion (${String((e as Error)?.message || e).slice(0, 100)})`);
+    return null;
+  }
+}
+
+/** Rata-rata skor motion dalam [start, end) dari Map detik->skor. */
+export function avgMotion(motion: Map<number, number> | null, start: number, end: number): number {
+  if (!motion || !motion.size) return 0;
+  let sum = 0, n = 0;
+  for (let t = Math.floor(start); t < end; t++) {
+    const v = motion.get(t);
+    if (v !== undefined) { sum += v; n++; }
+  }
+  return n ? sum / n : 0;
+}
+
+/** Boost skor momen berdasar motion relatif (gaming): momen dengan motion
+ *  tertinggi di video dapat +1.0, sisanya proporsional. Tanpa motion → tidak berubah. */
+export function applyMotionBoost(
+  ranked: Array<{ mulai: number; selesai: number; skor: number }>,
+  motion: Map<number, number> | null
+): Array<{ mulai: number; selesai: number; skor: number }> {
+  if (!motion || !motion.size) return ranked;
+  const maxMotion = Math.max(0, ...motion.values());
+  if (maxMotion <= 0) return ranked;
+  return ranked.map((m) => ({
+    ...m,
+    skor: r2(m.skor + (avgMotion(motion, m.mulai, m.selesai) / maxMotion) * 1.0),
+  }));
+}
+
 /** Pilih momen pakai LLM (provider dari Pengaturan — Gemini kalau provider=gemini).
  *  Video panjang dianalisis per jendela 25 menit agar tiap call LLM hemat token,
  *  lalu kandidat dari semua jendela digabung dan dipilih BERDASAR SKOR VIRAL:
  *  semua momen dengan skor >= minScore diambil (maks maxClips klip); kalau tidak
  *  ada yang mencapai minScore, ambil 3 skor tertinggi agar job tetap menghasilkan klip.
  *  Gagal / tidak valid → null, pemanggil pakai pickProposals rule-based. */
-async function pickMomentsLLM(segs: Seg[], dur: number, job: Job, cs: ClipSettings): Promise<Proposal[] | null> {
+async function pickMomentsLLM(segs: Seg[], dur: number, job: Job, cs: ClipSettings, ctype: ContentType = "general", motion: Map<number, number> | null = null): Promise<Proposal[] | null> {
   const WIN = 1500; // 25 menit per jendela
-  // deteksi tipe konten sekali dari seluruh transkrip → prompt LLM disesuaikan
-  const ctype = detectContentType(segs).type;
-  pushLog(job, `[ai] tipe konten: ${ctype}`, true);
   const windows = new Map<number, Seg[]>();
   for (const s of segs) {
     const w = Math.floor(s.start / WIN);
@@ -283,9 +348,11 @@ async function pickMomentsLLM(segs: Seg[], dur: number, job: Job, cs: ClipSettin
     if (got) all.push(...got);
   }
   if (!all.length) return null;
-  const ranked = all
-    .map((p) => ({ mulai: p.start, selesai: p.end, skor: p.score }))
-    .sort((a, b) => (b.skor ?? 0) - (a.skor ?? 0));
+  // sinyal motion (gaming): boost skor momen yang aksinya tinggi (maks +1.0)
+  const ranked = applyMotionBoost(
+    all.map((p) => ({ mulai: p.start, selesai: p.end, skor: p.score })),
+    motion
+  ).sort((a, b) => (b.skor ?? 0) - (a.skor ?? 0));
   // pilih berdasar nilai keviralan, bukan jumlah tetap
   const viral = ranked.filter((m) => (m.skor ?? 0) >= cs.minScore);
   const picked = viral.length ? viral.slice(0, cs.maxClips) : ranked.slice(0, 3);
@@ -427,7 +494,15 @@ export async function runJob(job: Job): Promise<void> {
     // Setting clipper (skor min, maks klip, durasi) dibaca dari form tool.
     const cs = clipSettings(job.inputs);
     pushLog(job, `[ai] setting: skor min ${cs.minScore} · maks ${cs.maxClips} klip · durasi ${cs.minDur}–${cs.maxDur} dtk`, true);
-    const proposals = (await pickMomentsLLM(segs, dur, job, cs)) ?? pickProposals(segs, cuts, dur, cs.maxClips);
+    // deteksi tipe konten sekali dari seluruh transkrip → prompt LLM disesuaikan
+    const ctype = detectContentType(segs).type;
+    pushLog(job, `[ai] tipe konten: ${ctype}`, true);
+    // gaming saja: ambil sinyal motion (download video low-res + OpenCV);
+    // gagal / OpenCV tidak ada → lanjut tanpa sinyal motion
+    const motion = ctype === "gaming"
+      ? await fetchMotion(job.url, dir, job.inputs?.cookies, (l) => pushLog(job, l))
+      : null;
+    const proposals = (await pickMomentsLLM(segs, dur, job, cs, ctype, motion)) ?? pickProposals(segs, cuts, dur, cs.maxClips);
     if (!proposals.length) throw new Error("tidak ada kandidat klip yang bisa dibuat");
     const first = segs.find((s) => s.text);
     job.title = (first?.text || `Klip dari ${job.url}`).slice(0, 60);
