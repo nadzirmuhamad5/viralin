@@ -4,7 +4,7 @@ import { randomUUID } from "crypto";
 import { DATA, jobs, persist, type Clip, type Job, type Stage } from "./store";
 import { buildAss, DEFAULT_PRESET, type Word } from "./captions";
 import { runTool } from "./toolrun";
-import { ytdlpFetch, transcribe, zaiChat, extractJson, type Seg } from "./mediakit";
+import { ytdlpFetch, transcribe, fetchVttSubs, zaiChat, extractJson, type Seg } from "./mediakit";
 import { run, tailErr } from "./exec";
 import { FONTS_DIR } from "./config";
 import { queueStats } from "./queue";
@@ -343,57 +343,77 @@ export async function runJob(job: Job): Promise<void> {
   try {
     pushLog(job, `[job] klip-ai · id ${job.id} · preset ${job.captionPreset}`, true);
     // ── 1. unduh AUDIO saja (clipper tidak butuh full video) ───────
-    // Transkrip cuma butuh audio; video diunduh per-segmen saat render.
+    // Coba subtitle VTT dulu (fast-path) — kalau ada dan cukup, skip audio + Whisper.
     curStage = "download";
     setStage(job, "download", "run");
     logTick = 0;
-    const client = await ytdlpFetch(
-      [
-        "--no-cache-dir", "--no-warnings", "--newline",
-        "-f", "bestaudio[ext=m4a]/bestaudio/best",
-        "-o", path.join(dir, "audio.%(ext)s"),
-      ],
-      job.url,
-      job.inputs?.cookies,
-      (l) => pushLog(job, l),
-      (l) => {
-        if (l.startsWith("[download]") && ++logTick % 6 !== 0) return;
-        pushLog(job, l);
-      }
-    );
-    pushLog(job, "[sumber] audio selesai" + (client === "default" ? "" : ` (client ${client})`));
+    let segs: Seg[] = [];
+    let dur = 0;
+    let useVtt = false;
     let src = "";
-    for (const f of await fs.readdir(dir)) {
-      if (f.startsWith("audio.")) src = path.join(dir, f);
+    const vttSegs = await fetchVttSubs(job.url, dir, job.inputs?.cookies, (l) => pushLog(job, l));
+    const vttChars = vttSegs ? vttSegs.reduce((a, s) => a + s.text.length, 0) : 0;
+    const vttDur = vttSegs ? Math.max(0, ...vttSegs.map((s) => s.end)) : 0;
+    if (vttSegs && vttChars >= 500 && vttDur > 0) {
+      segs = vttSegs;
+      dur = vttDur;
+      useVtt = true;
+      pushLog(job, `[sub] pakai subtitle VTT (${segs.length} segmen, ${vttChars} karakter) — audio + Whisper dilewati`, true);
+    } else {
+      pushLog(job, "[sub] tidak ada subtitle VTT yang cukup — pakai Whisper", true);
+      const client = await ytdlpFetch(
+        [
+          "--no-cache-dir", "--no-warnings", "--newline",
+          "-f", "bestaudio[ext=m4a]/bestaudio/best",
+          "-o", path.join(dir, "audio.%(ext)s"),
+        ],
+        job.url,
+        job.inputs?.cookies,
+        (l) => pushLog(job, l),
+        (l) => {
+          if (l.startsWith("[download]") && ++logTick % 6 !== 0) return;
+          pushLog(job, l);
+        }
+      );
+      pushLog(job, "[sumber] audio selesai" + (client === "default" ? "" : ` (client ${client})`));
+      for (const f of await fs.readdir(dir)) {
+        if (f.startsWith("audio.")) src = path.join(dir, f);
+      }
+      if (!src) throw new Error("file audio tidak ditemukan setelah unduh");
     }
-    if (!src) throw new Error("file audio tidak ditemukan setelah unduh");
     setStage(job, "download", "done");
 
     // ── 2. probe ──────────────────────────────────────────────────────
     curStage = "probe";
     setStage(job, "probe", "run");
-    const pr = await run([
-      "ffprobe", "-v", "error", "-show_entries", "format=duration",
-      "-of", "json", src,
-    ]);
-    const dur = parseFloat(JSON.parse(pr.stdout).format?.duration || "0");
-    if (!dur) throw new Error("ffprobe gagal membaca durasi");
+    if (!useVtt) {
+      const pr = await run([
+        "ffprobe", "-v", "error", "-show_entries", "format=duration",
+        "-of", "json", src,
+      ]);
+      dur = parseFloat(JSON.parse(pr.stdout).format?.duration || "0");
+      if (!dur) throw new Error("ffprobe gagal membaca durasi");
+    }
     job.sourceSeconds = r1(dur);
-    pushLog(job, `[probe] durasi ${r1(dur)}s`, true);
+    pushLog(job, `[probe] durasi ${r1(dur)}s${useVtt ? " (dari subtitle)" : ""}`, true);
     setStage(job, "probe", "done");
 
     // ── 3. transkrip (faster-whisper, resident worker + fallback) ─────
     curStage = "transcribe";
     setStage(job, "transcribe", "run");
-    const wav = path.join(dir, "audio.wav");
-    const ax = await run(["ffmpeg", "-y", "-i", src, "-vn", "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le", wav]);
-    if (ax.code !== 0) throw new Error("ekstrak audio gagal: " + tailErr(ax.stderr));
-    const info = await transcribe(wav, dir, (l) => pushLog(job, l));
-    const segs: Seg[] = info.segments;
-    job.lang = info.language;
-    const nWords = allWords(segs).length;
-    if (!segs.length) pushLog(job, "⚠️ tidak ada ucapan terdeteksi — momen dipilih dari scene", true);
-    if (!nWords) pushLog(job, "⚠️ word timestamp kosong — klip dirender tanpa caption", true);
+    if (!useVtt) {
+      const wav = path.join(dir, "audio.wav");
+      const ax = await run(["ffmpeg", "-y", "-i", src, "-vn", "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le", wav]);
+      if (ax.code !== 0) throw new Error("ekstrak audio gagal: " + tailErr(ax.stderr));
+      const info = await transcribe(wav, dir, (l) => pushLog(job, l));
+      segs = info.segments;
+      job.lang = info.language;
+      const nWords = allWords(segs).length;
+      if (!segs.length) pushLog(job, "⚠️ tidak ada ucapan terdeteksi — momen dipilih dari scene", true);
+      if (!nWords) pushLog(job, "⚠️ word timestamp kosong — klip dirender tanpa caption", true);
+    } else {
+      pushLog(job, "[whisper] dilewati — pakai subtitle VTT (tanpa word timestamp, caption kata tidak tersedia)", true);
+    }
     setStage(job, "transcribe", "done");
 
     // ── 4. analisis & pilih momen ─────────────────────────────────────

@@ -171,6 +171,72 @@ export async function transcribe(
   return info;
 }
 
+/** Parse file subtitle VTT → Seg[] (start/end/teks, tanpa word timestamp).
+ *  Cue: baris `HH:MM:SS.mmm --> HH:MM:SS.mmm` lalu 1+ baris teks; tag `<...>` dibuang. */
+export function parseVtt(text: string): Seg[] {
+  const toSec = (s: string): number => {
+    const p = s.trim().split(":");
+    const sec = parseFloat(p[p.length - 1]);
+    const min = parseInt(p[p.length - 2] || "0", 10);
+    const hr = p.length > 2 ? parseInt(p[0], 10) : 0;
+    return hr * 3600 + min * 60 + sec;
+  };
+  const segs: Seg[] = [];
+  let cur: { start: number; end: number; text: string[] } | null = null;
+  const flush = () => {
+    if (cur && cur.text.length) {
+      const t = cur.text.join(" ")
+        .replace(/<[^>]*>/g, "")
+        .replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&nbsp;/g, " ")
+        .trim();
+      if (t) segs.push({ start: cur.start, end: cur.end, text: t });
+    }
+    cur = null;
+  };
+  for (const line of text.split(/\r?\n/)) {
+    const t = line.trim();
+    if (!t) { flush(); continue; }
+    const m = t.match(/^([\d:.]+)\s*-->\s*([\d:.]+)/);
+    if (m) {
+      flush();
+      cur = { start: toSec(m[1]), end: toSec(m[2]), text: [] };
+      continue;
+    }
+    if (t === "WEBVTT" || t.startsWith("WEBVTT") || t.startsWith("NOTE") || t.startsWith("STYLE") || t.startsWith("REGION")) continue;
+    if (cur) cur.text.push(t); // baris id cue (sebelum timestamp) diabaikan — cur masih null
+  }
+  flush();
+  return segs;
+}
+
+/** Ambil subtitle YouTube (VTT, id lalu en) via yt-dlp — fast-path sebelum Whisper.
+ *  Return Seg[] atau null kalau tidak ada/gagal. Tidak throw (gagal = fallback Whisper). */
+export async function fetchVttSubs(
+  url: string,
+  dir: string,
+  cookies: string | undefined,
+  log: (l: string) => void
+): Promise<Seg[] | null> {
+  const base = path.join(dir, "subs");
+  try {
+    await ytdlpFetch(
+      ["--skip-download", "--write-subs", "--write-auto-subs", "--sub-lang", "id,en", "--sub-format", "vtt", "-o", base + ".%(ext)s"],
+      url, cookies, log
+    );
+  } catch {
+    return null; // tidak ada subtitle / gagal — pemanggil lanjut ke Whisper
+  }
+  // yt-dlp menulis subs.<lang>.vtt (atau subs.<lang>.auto.vtt); utamakan id
+  const files = await fs.readdir(dir).catch(() => [] as string[]);
+  const pick = (lang: string) => files.find((f) => f.startsWith("subs.") && f.includes(`.${lang}.`) && f.endsWith(".vtt"));
+  const name = pick("id") || pick("en");
+  if (!name) return null;
+  const text = await fs.readFile(path.join(dir, name), "utf-8").catch(() => "");
+  if (!text) return null;
+  const segs = parseVtt(text);
+  return segs.length ? segs : null;
+}
+
 /** Sintesis TTS (edge-tts) → file audio. */
 export async function ttsSynth(
   text: string,
