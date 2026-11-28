@@ -160,10 +160,11 @@ function pickProposals(segs: Seg[], cuts: number[], dur: number): Proposal[] {
   return picked;
 }
 
-/** Validasi momen dari LLM: clamp ke durasi, 15-45 dtk, tidak tumpang tindih, maks 3, urut. */
+/** Validasi momen dari LLM: clamp ke durasi, 15-45 dtk, tidak tumpang tindih, maks `max`, urut. */
 export function sanitizeMoments(
-  momen: Array<{ mulai?: number; selesai?: number }>,
-  dur: number
+  momen: Array<{ mulai?: number; selesai?: number; skor?: number }>,
+  dur: number,
+  max = 3
 ): Proposal[] {
   const out: Proposal[] = [];
   for (const m of momen || []) {
@@ -171,36 +172,72 @@ export function sanitizeMoments(
     const end = r2(Math.min(dur, Number(m.selesai) || 0));
     if (end - start < 15 || end - start > 45) continue;
     if (out.some((p) => start < p.end && end > p.start)) continue; // tumpang tindih
-    out.push({ start, end, score: 0 });
-    if (out.length >= 3) break;
+    out.push({ start, end, score: r2(Number(m.skor) || 0) });
+    if (out.length >= max) break;
   }
   return out.sort((a, b) => a.start - b.start);
 }
 
-/** Pilih momen pakai LLM (provider dari Pengaturan — Gemini kalau provider=gemini).
- *  Gagal / tidak valid → null, pemanggil pakai pickProposals rule-based. */
-async function pickMomentsLLM(segs: Seg[], dur: number, job: Job): Promise<Proposal[] | null> {
-  const transkrip = segs
-    .map((s) => `[${s.start.toFixed(1)}–${s.end.toFixed(1)}s] ${s.text}`)
-    .join("\n")
-    .slice(0, 5000);
+/** Potong transkrip ke budget karakter dengan sampling merata (awal/tengah/akhir tetap terwakili). */
+function capTranscript(lines: string[], maxChars: number): string {
+  const full = lines.join("\n");
+  if (full.length <= maxChars) return full;
+  const step = Math.ceil(full.length / maxChars);
+  return lines.filter((_, i) => i % step === 0).join("\n").slice(0, maxChars);
+}
+
+/** Satu jendela 25 menit → maks 2 momen via LLM. Gagal → null (jendela lain tetap jalan). */
+async function pickWindowLLM(winSegs: Seg[], winStart: number, winEnd: number, dur: number, job: Job): Promise<Proposal[] | null> {
+  const transkrip = capTranscript(
+    winSegs.map((s) => `[${s.start.toFixed(1)}–${s.end.toFixed(1)}s] ${s.text}`),
+    25000
+  );
   if (!transkrip) return null;
   try {
     const raw = await zaiChat(
-      'Kamu analis konten viral TikTok/Reels Indonesia. Pilih momen terbaik dari transkrip untuk dijadikan klip pendek. Balas HANYA JSON: {"momen":[{"mulai":0,"selesai":30,"alasan":"..."}]}. ' +
-        "Maks 3 momen, tiap momen 15-45 detik (ideal ±30 detik), tidak tumpang tindih, dalam durasi video. Prioritaskan hook kuat di awal, momen emosional/energi tinggi, dan kalimat yang utuh (jangan potong di tengah kalimat).",
-      `Durasi video: ${Math.round(dur)}s.\nTranskrip ber-timestamp:\n${transkrip}`,
+      'Kamu analis konten viral TikTok/Reels Indonesia. Pilih momen terbaik dari transkrip untuk dijadikan klip pendek. Balas HANYA JSON: {"momen":[{"mulai":0,"selesai":30,"skor":8.5,"alasan":"..."}]}. ' +
+        "Maks 2 momen, tiap momen 15-45 detik (ideal ±30 detik), tidak tumpang tindih, dalam durasi video. Skor 1-10 seberapa viral momen itu (hook, emosi, layak dishare). Prioritaskan hook kuat di awal, momen emosional/energi tinggi, dan kalimat yang utuh (jangan potong di tengah kalimat).",
+      `Durasi video: ${Math.round(dur)}s. Jendela analisis ini: ${winStart}–${winEnd}s — pilih momen HANYA dalam jendela ini.\nTranskrip ber-timestamp:\n${transkrip}`,
       (l) => pushLog(job, l)
     );
-    const j = extractJson<{ momen?: Array<{ mulai?: number; selesai?: number; alasan?: string }> }>(raw);
-    const out = sanitizeMoments(j.momen || [], dur);
+    const j = extractJson<{ momen?: Array<{ mulai?: number; selesai?: number; skor?: number; alasan?: string }> }>(raw);
+    const out = sanitizeMoments(j.momen || [], dur, 2);
     if (!out.length) return null;
-    pushLog(job, `[ai] momen dipilih LLM: ${out.map((p) => `${p.start}–${p.end}s`).join(" · ")}`, true);
     return out;
   } catch (e) {
-    pushLog(job, `[ai] analisis LLM gagal, pakai skor rule-based — ${String((e as Error)?.message || e).slice(0, 120)}`);
+    pushLog(job, `[ai] jendela ${winStart}–${winEnd}s gagal, dilewati — ${String((e as Error)?.message || e).slice(0, 120)}`);
     return null;
   }
+}
+
+/** Pilih momen pakai LLM (provider dari Pengaturan — Gemini kalau provider=gemini).
+ *  Video panjang dianalisis per jendela 25 menit agar tiap call LLM hemat token,
+ *  lalu kandidat dari semua jendela digabung dan diambil 3 terbaik (berdasar skor).
+ *  Gagal / tidak valid → null, pemanggil pakai pickProposals rule-based. */
+async function pickMomentsLLM(segs: Seg[], dur: number, job: Job): Promise<Proposal[] | null> {
+  const WIN = 1500; // 25 menit per jendela
+  const windows = new Map<number, Seg[]>();
+  for (const s of segs) {
+    const w = Math.floor(s.start / WIN);
+    const arr = windows.get(w) ?? [];
+    arr.push(s);
+    windows.set(w, arr);
+  }
+  const all: Proposal[] = [];
+  for (const [w, winSegs] of [...windows.entries()].sort((a, b) => a[0] - b[0])) {
+    const winStart = w * WIN;
+    const winEnd = Math.min((w + 1) * WIN, dur);
+    const got = await pickWindowLLM(winSegs, winStart, winEnd, dur, job);
+    if (got) all.push(...got);
+  }
+  if (!all.length) return null;
+  const ranked = all
+    .map((p) => ({ mulai: p.start, selesai: p.end, skor: p.score }))
+    .sort((a, b) => (b.skor ?? 0) - (a.skor ?? 0));
+  const out = sanitizeMoments(ranked, dur, 3);
+  if (!out.length) return null;
+  pushLog(job, `[ai] momen dipilih LLM: ${out.map((p) => `${p.start}–${p.end}s`).join(" · ")}`, true);
+  return out;
 }
 
 /** Kumpulkan semua kata ber-timestamp dari segmen whisper (untuk caption karaoke). */
