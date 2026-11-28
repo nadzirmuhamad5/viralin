@@ -4,7 +4,7 @@ import { randomUUID } from "crypto";
 import { DATA, jobs, persist, type Clip, type Job, type Stage } from "./store";
 import { buildAss, DEFAULT_PRESET, type Word } from "./captions";
 import { runTool } from "./toolrun";
-import { ytdlpFetch, transcribe, type Seg } from "./mediakit";
+import { ytdlpFetch, transcribe, zaiChat, extractJson, type Seg } from "./mediakit";
 import { run, tailErr } from "./exec";
 import { FONTS_DIR, MAX_SECONDS } from "./config";
 import { queueStats } from "./queue";
@@ -160,6 +160,49 @@ function pickProposals(segs: Seg[], cuts: number[], dur: number): Proposal[] {
   return picked;
 }
 
+/** Validasi momen dari LLM: clamp ke durasi, 15-45 dtk, tidak tumpang tindih, maks 3, urut. */
+export function sanitizeMoments(
+  momen: Array<{ mulai?: number; selesai?: number }>,
+  dur: number
+): Proposal[] {
+  const out: Proposal[] = [];
+  for (const m of momen || []) {
+    const start = r2(Math.max(0, Number(m.mulai) || 0));
+    const end = r2(Math.min(dur, Number(m.selesai) || 0));
+    if (end - start < 15 || end - start > 45) continue;
+    if (out.some((p) => start < p.end && end > p.start)) continue; // tumpang tindih
+    out.push({ start, end, score: 0 });
+    if (out.length >= 3) break;
+  }
+  return out.sort((a, b) => a.start - b.start);
+}
+
+/** Pilih momen pakai LLM (provider dari Pengaturan — Gemini kalau provider=gemini).
+ *  Gagal / tidak valid → null, pemanggil pakai pickProposals rule-based. */
+async function pickMomentsLLM(segs: Seg[], dur: number, job: Job): Promise<Proposal[] | null> {
+  const transkrip = segs
+    .map((s) => `[${s.start.toFixed(1)}–${s.end.toFixed(1)}s] ${s.text}`)
+    .join("\n")
+    .slice(0, 5000);
+  if (!transkrip) return null;
+  try {
+    const raw = await zaiChat(
+      'Kamu analis konten viral TikTok/Reels Indonesia. Pilih momen terbaik dari transkrip untuk dijadikan klip pendek. Balas HANYA JSON: {"momen":[{"mulai":0,"selesai":30,"alasan":"..."}]}. ' +
+        "Maks 3 momen, tiap momen 15-45 detik (ideal ±30 detik), tidak tumpang tindih, dalam durasi video. Prioritaskan hook kuat di awal, momen emosional/energi tinggi, dan kalimat yang utuh (jangan potong di tengah kalimat).",
+      `Durasi video: ${Math.round(dur)}s.\nTranskrip ber-timestamp:\n${transkrip}`,
+      (l) => pushLog(job, l)
+    );
+    const j = extractJson<{ momen?: Array<{ mulai?: number; selesai?: number; alasan?: string }> }>(raw);
+    const out = sanitizeMoments(j.momen || [], dur);
+    if (!out.length) return null;
+    pushLog(job, `[ai] momen dipilih LLM: ${out.map((p) => `${p.start}–${p.end}s`).join(" · ")}`, true);
+    return out;
+  } catch (e) {
+    pushLog(job, `[ai] analisis LLM gagal, pakai skor rule-based — ${String((e as Error)?.message || e).slice(0, 120)}`);
+    return null;
+  }
+}
+
 /** Kumpulkan semua kata ber-timestamp dari segmen whisper (untuk caption karaoke). */
 function allWords(segs: Seg[]): Word[] {
   const out: Word[] = [];
@@ -279,7 +322,9 @@ export async function runJob(job: Job): Promise<void> {
     curStage = "analyze";
     setStage(job, "analyze", "run");
     const cuts = await detectScenes(src, dur, job);
-    const proposals = pickProposals(segs, cuts, dur);
+    // LLM dulu (provider dari Pengaturan — Gemini kalau provider=gemini);
+    // gagal / tidak valid → fallback ke skor rule-based (kata + scene cut).
+    const proposals = (await pickMomentsLLM(segs, dur, job)) ?? pickProposals(segs, cuts, dur);
     if (!proposals.length) throw new Error("tidak ada kandidat klip yang bisa dibuat");
     const first = segs.find((s) => s.text);
     job.title = (first?.text || `Klip dari ${job.url}`).slice(0, 60);
