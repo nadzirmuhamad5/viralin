@@ -10,10 +10,10 @@ import { FONTS_DIR, MAX_SECONDS } from "./config";
 import { queueStats } from "./queue";
 
 const STAGES: Array<[string, string]> = [
-  ["download", "⬇️ yt-dlp — unduh video"],
+  ["download", "⬇️ yt-dlp — unduh audio"],
   ["probe", "🔎 ffprobe — durasi & metadata"],
   ["transcribe", "🎙️ faster-whisper — transkrip + timestamp"],
-  ["analyze", "🧠 pilih momen — density scene + kepadatan ujaran"],
+  ["analyze", "🧠 pilih momen — LLM + kepadatan ujaran"],
   ["render", "🎬 ffmpeg — render klip 9:16 + caption"],
 ];
 
@@ -97,19 +97,6 @@ function stageSummary(job: Job): string {
       return `${s.name}:${s.status}${dur}`;
     })
     .join(" · ");
-}
-
-/** Deteksi cut scene. Video di-downscale ke 160×90 dulu — skor scene cukup akurat
- *  untuk pemilihan momen, sementara CPU decode turun 20–50× dibanding resolusi penuh. */
-async function detectScenes(src: string, dur: number, job: Job): Promise<number[]> {
-  const r = await run([
-    "ffmpeg", "-hide_banner", "-an", "-i", src,
-    "-vf", "scale=160:90,select='gt(scene,0.3)',showinfo", "-f", "null", "-",
-  ]);
-  const ts = [...r.stderr.matchAll(/pts_time:([0-9.]+)/g)].map((m) => parseFloat(m[1]));
-  const out = [...new Set(ts.filter((t) => 0 < t && t < dur))].sort((a, b) => a - b);
-  pushLog(job, `[scene] ${out.length} cut terdeteksi`);
-  return [0, ...out, dur];
 }
 
 type Proposal = { start: number; end: number; score: number };
@@ -287,17 +274,16 @@ export async function runJob(job: Job): Promise<void> {
 
   try {
     pushLog(job, `[job] klip-ai · id ${job.id} · preset ${job.captionPreset}`, true);
-    // ── 1. unduh (yt-dlp, + cookies opsional & fallback client) ───────
+    // ── 1. unduh AUDIO saja (clipper tidak butuh full video) ───────
+    // Transkrip cuma butuh audio; video diunduh per-segmen saat render.
     curStage = "download";
     setStage(job, "download", "run");
     logTick = 0;
     const client = await ytdlpFetch(
       [
         "--no-cache-dir", "--no-warnings", "--newline",
-        // trik YTSage: sorting resolusi lebih tahan banting daripada -f ketat
-        "-S", "res:1080", "-N", "4",
-        "--merge-output-format", "mp4",
-        "-o", path.join(dir, "source.%(ext)s"),
+        "-f", "bestaudio[ext=m4a]/bestaudio/best",
+        "-o", path.join(dir, "audio.%(ext)s"),
       ],
       job.url,
       job.inputs?.cookies,
@@ -307,22 +293,12 @@ export async function runJob(job: Job): Promise<void> {
         pushLog(job, l);
       }
     );
-    pushLog(job, "[sumber] unduhan selesai" + (client === "default" ? "" : ` (client ${client})`));
+    pushLog(job, "[sumber] audio selesai" + (client === "default" ? "" : ` (client ${client})`));
     let src = "";
     for (const f of await fs.readdir(dir)) {
-      if (f.startsWith("source.")) src = path.join(dir, f);
+      if (f.startsWith("audio.")) src = path.join(dir, f);
     }
-    if (!src) throw new Error("file sumber tidak ditemukan setelah unduh");
-    // kalau bukan mp4 (mis. webm vp9), remux/transcode ringan ke mp4
-    if (!src.endsWith(".mp4")) {
-      const mp4 = src.replace(/\.\w+$/, ".mp4");
-      const rm = await run(["ffmpeg", "-y", "-i", src, "-c", "copy", "-movflags", "+faststart", mp4]);
-      if (rm.code !== 0) {
-        const tc = await run(["ffmpeg", "-y", "-i", src, "-c:v", "libx264", "-preset", "veryfast", "-crf", "27", "-c:a", "aac", mp4]);
-        if (tc.code !== 0) throw new Error("konversi ke mp4 gagal: " + tailErr(tc.stderr));
-      }
-      src = mp4;
-    }
+    if (!src) throw new Error("file audio tidak ditemukan setelah unduh");
     setStage(job, "download", "done");
 
     // ── 2. probe ──────────────────────────────────────────────────────
@@ -358,7 +334,9 @@ export async function runJob(job: Job): Promise<void> {
     // ── 4. analisis & pilih momen ─────────────────────────────────────
     curStage = "analyze";
     setStage(job, "analyze", "run");
-    const cuts = await detectScenes(src, dur, job);
+    // tanpa full video, scene-detect dilewati — LLM + kepadatan ujaran saja
+    const cuts: number[] = [];
+    pushLog(job, "[scene] dilewati (mode audio-only)", true);
     // LLM dulu (provider dari Pengaturan — Gemini kalau provider=gemini);
     // gagal / tidak valid → fallback ke skor rule-based (kata + scene cut).
     const proposals = (await pickMomentsLLM(segs, dur, job)) ?? pickProposals(segs, cuts, dur);
@@ -397,9 +375,30 @@ export async function runJob(job: Job): Promise<void> {
           ? `,subtitles=filename='${capAss}':fontsdir='${FONTS_DIR}'`
           : "");
       const tClip = Date.now();
+      // unduh segmen video saja (HLS, ala ClipFlow) — bukan full video
+      const segBase = path.join(dir, `seg-${i}`);
+      await ytdlpFetch(
+        [
+          "--no-cache-dir", "--no-warnings", "--newline",
+          "-f", "best[protocol=m3u8]/best",
+          "--download-sections", `*${p.start}-${p.end}`,
+          "--force-keyframes-at-cuts",
+          "--no-hls-use-mpegts",
+          "--concurrent-fragments", "8",
+          "-o", segBase + ".%(ext)s",
+        ],
+        job.url,
+        job.inputs?.cookies,
+        (l) => pushLog(job, l)
+      );
+      let segSrc = "";
+      for (const f of await fs.readdir(dir)) {
+        if (f.startsWith(`seg-${i}.`)) segSrc = path.join(dir, f);
+      }
+      if (!segSrc) throw new Error(`segmen ${i + 1} tidak terunduh`);
+      // segmen sudah sepanjang klip — render langsung tanpa -ss/-t
       const rr = await run([
-        "ffmpeg", "-y", "-ss", String(p.start), "-i", src,
-        "-t", (p.end - p.start).toFixed(2),
+        "ffmpeg", "-y", "-i", segSrc,
         "-vf", vf,
         "-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
         "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "128k",
