@@ -124,7 +124,7 @@ function pickProposals(segs: Seg[], cuts: number[], dur: number): Proposal[] {
   cands.sort((a, b) => b.score - a.score);
   const picked: Proposal[] = [];
   for (const c of cands) {
-    if (picked.length >= 3) break;
+    if (picked.length >= 6) break;
     if (picked.every((p) => c.end <= p.start || c.start >= p.end)) {
       picked.push({ start: c.start, end: c.end, score: c.score });
     }
@@ -132,7 +132,7 @@ function pickProposals(segs: Seg[], cuts: number[], dur: number): Proposal[] {
   if (!picked.length) {
     // fallback: window tunggal awal video / berbasis scene
     if (cuts.length >= 3) {
-      for (let i = 0; i < cuts.length - 1 && picked.length < 3; i++) {
+      for (let i = 0; i < cuts.length - 1 && picked.length < 6; i++) {
         const start = cuts[i];
         const end = cuts.find((t) => t > start + 15 && t <= start + 45);
         if (end && picked.every((p) => end <= p.start || start >= p.end)) {
@@ -199,7 +199,9 @@ async function pickWindowLLM(winSegs: Seg[], winStart: number, winEnd: number, d
 
 /** Pilih momen pakai LLM (provider dari Pengaturan — Gemini kalau provider=gemini).
  *  Video panjang dianalisis per jendela 25 menit agar tiap call LLM hemat token,
- *  lalu kandidat dari semua jendela digabung dan diambil 3 terbaik (berdasar skor).
+ *  lalu kandidat dari semua jendela digabung dan dipilih BERDASAR SKOR VIRAL:
+ *  semua momen dengan skor >= 7 diambil (maks 6 klip); kalau tidak ada yang
+ *  mencapai 7, ambil 3 skor tertinggi agar job tetap menghasilkan klip.
  *  Gagal / tidak valid → null, pemanggil pakai pickProposals rule-based. */
 async function pickMomentsLLM(segs: Seg[], dur: number, job: Job): Promise<Proposal[] | null> {
   const WIN = 1500; // 25 menit per jendela
@@ -221,7 +223,12 @@ async function pickMomentsLLM(segs: Seg[], dur: number, job: Job): Promise<Propo
   const ranked = all
     .map((p) => ({ mulai: p.start, selesai: p.end, skor: p.score }))
     .sort((a, b) => (b.skor ?? 0) - (a.skor ?? 0));
-  const out = sanitizeMoments(ranked, dur, 3);
+  // pilih berdasar nilai keviralan, bukan jumlah tetap
+  const VIRAL_MIN = 7;
+  const VIRAL_MAX = 6;
+  const viral = ranked.filter((m) => (m.skor ?? 0) >= VIRAL_MIN);
+  const picked = viral.length ? viral.slice(0, VIRAL_MAX) : ranked.slice(0, 3);
+  const out = sanitizeMoments(picked, dur, VIRAL_MAX);
   if (!out.length) return null;
   pushLog(job, `[ai] momen dipilih LLM: ${out.map((p) => `${p.start}–${p.end}s`).join(" · ")}`, true);
   return out;
