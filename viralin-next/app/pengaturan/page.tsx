@@ -13,7 +13,7 @@ type LlmInfo = {
 const LLM_PROVIDERS_UI = [
   { value: "aria", label: "Aria Router (deepseek-flash)" },
   { value: "onemin", label: "1min.ai (qwen3.7-flash)" },
-  { value: "gemini", label: "Gemini (gemini-2.5-flash)" },
+  { value: "gemini", label: "Gemini (gemini-3.8-flash)" },
   { value: "openrouter", label: "OpenRouter (openrouter/free)" },
   { value: "ollama", label: "Ollama (deepseek-v4.1-flash)" },
 ];

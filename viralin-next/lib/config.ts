@@ -48,7 +48,7 @@ export const LLM_PROVIDERS = {
   /** 1min.ai — key dari env ONEMIN_API_KEYS (ONEMIN_API_KEY tunggal juga dibaca). */
   onemin: { baseUrl: "https://api.1min.ai/openai/v1", apiKeys: [...splitKeys(process.env.ONEMIN_API_KEYS), ...splitKeys(process.env.ONEMIN_API_KEY)], keyEnv: "ONEMIN_API_KEYS", model: process.env.ONEMIN_MODEL || "qwen3.7-flash" },
   /** Gemini (jalur OpenAI-compatible) — key dari env GEMINI_API_KEYS (GEMINI_API_KEY tunggal juga dibaca). */
-  gemini: { baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai", apiKeys: [...splitKeys(process.env.GEMINI_API_KEYS), ...splitKeys(process.env.GEMINI_API_KEY)], keyEnv: "GEMINI_API_KEYS", model: process.env.GEMINI_MODEL || "gemini-2.5-flash" },
+  gemini: { baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai", apiKeys: [...splitKeys(process.env.GEMINI_API_KEYS), ...splitKeys(process.env.GEMINI_API_KEY)], keyEnv: "GEMINI_API_KEYS", model: process.env.GEMINI_MODEL || "gemini-3.8-flash" },
   /** OpenRouter — key dari env OPENROUTER_API_KEYS (OPENROUTER_API_KEY tunggal juga dibaca). */
   openrouter: { baseUrl: "https://openrouter.ai/api/v1", apiKeys: [...splitKeys(process.env.OPENROUTER_API_KEYS), ...splitKeys(process.env.OPENROUTER_API_KEY)], keyEnv: "OPENROUTER_API_KEYS", model: process.env.OPENROUTER_MODEL || "openrouter/free" },
   /** Ollama Cloud — key dari env OLLAMA_API_KEYS (OLLAMA_API_KEY tunggal juga dibaca). */
